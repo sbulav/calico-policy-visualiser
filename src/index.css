@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+:root {
+  --color-allow: #22c55e;
+  --color-deny: #ef4444;
+  --color-log: #f59e0b;
+  --color-pass: #3b82f6;
+  --color-bg: #0f172a;
+  --color-surface: #1e293b;
+  --color-surface-hover: #334155;
+  --color-border: #334155;
+  --color-text: #e2e8f0;
+  --color-text-muted: #94a3b8;
+  --color-accent: #6366f1;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* React Flow overrides */
+.react-flow__background {
+  background-color: var(--color-bg) !important;
+}
+
+.react-flow__minimap {
+  background-color: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 8px;
+}
+
+.react-flow__controls {
+  background-color: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background-color: var(--color-surface) !important;
+  border-bottom: 1px solid var(--color-border) !important;
+  fill: var(--color-text) !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: var(--color-surface-hover) !important;
+}
+
+.react-flow__controls-button svg {
+  fill: var(--color-text-muted) !important;
+}
+
+/* Scrollbar styling (standard properties — supported in all modern browsers) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) var(--color-bg);
+}
+
+/* Ports overflow tooltip */
+.ports-hint {
+  position: relative;
+  cursor: help;
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+.ports-hint::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 400;
+  white-space: pre-line;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  min-width: 100px;
+  max-width: 240px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.ports-hint:hover::after {
+  opacity: 1;
+}
+
+/* CodeMirror rule highlight — shown when hovering a rule card in the visualization */
+.cm-highlighted-rule {
+  background-color: rgba(251, 191, 36, 0.12) !important;
+  border-left: 2px solid rgba(251, 191, 36, 0.6);
+}

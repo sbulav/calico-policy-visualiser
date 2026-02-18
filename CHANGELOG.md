@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.2] - 2026-02-18
+
+### Fixed
+
+- **Fixed React error #31 crash when selector fields are objects instead of strings.** When users mistakenly wrote YAML like `namespaceSelector: {namespace: production}` instead of `namespaceSelector: "kubernetes.io/metadata.name == 'production'"`, the app crashed with "Objects are not valid as a React child" error.
+  - **Parser sanitization (`yamlParser.ts`):** Extended `sanitizeEntityRule()` to validate `selector`, `notSelector`, `namespaceSelector`, and `serviceAccounts.selector` fields. Non-string values are set to `undefined` to prevent rendering crashes.
+  - **Policy-level selector sanitization:** Added `sanitizePolicySelector()` helper and applied it to `spec.selector`, `spec.namespaceSelector`, and `spec.serviceAccountSelector`.
+  - **User-friendly warnings:** Added `collectSelectorWarnings()` function that generates helpful messages like "namespaceSelector should be a string, got object. Use namespaceSelector: \"kubernetes.io/metadata.name == 'foo'\" syntax."
+
+### Added (tests)
+
+- **8 new tests** covering selector sanitization:
+  - Tests for `namespaceSelector`, `selector`, `notSelector`, and `serviceAccounts.selector` as objects in rule entities.
+  - Tests for policy-level `selector`, `namespaceSelector`, and `serviceAccountSelector` as objects.
+  - Test confirming valid string selectors pass through without warnings.
+
 ## [0.8.1] - 2026-02-10
 
 ### Changed

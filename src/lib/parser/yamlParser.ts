@@ -15,6 +15,7 @@ const VALID_KINDS: PolicyKind[] = ['NetworkPolicy', 'GlobalNetworkPolicy'];
 // Filter null/undefined values that js-yaml produces from incomplete YAML list
 // items (e.g. `- ` with no value). Without this, downstream code like ipUtils
 // will crash when calling string methods on null array elements.
+// Also sanitizes selector fields to ensure they are strings (not objects).
 function sanitizeEntityRule(entity: EntityRule | undefined): EntityRule | undefined {
   if (!entity) return entity;
   const result = { ...entity };
@@ -36,6 +37,23 @@ function sanitizeEntityRule(entity: EntityRule | undefined): EntityRule | undefi
       names: result.serviceAccounts.names.filter((n): n is string => typeof n === 'string'),
     };
   }
+  // Sanitize selector fields - must be strings, not objects
+  // This prevents React errors when rendering selectors in JSX
+  const selectorFields = ['selector', 'notSelector', 'namespaceSelector'] as const;
+  for (const field of selectorFields) {
+    if (result[field] !== undefined && typeof result[field] !== 'string') {
+      // Convert to undefined - the field will be ignored
+      // Warnings are collected separately in collectSelectorWarnings()
+      result[field] = undefined as unknown as string;
+    }
+  }
+  // Sanitize serviceAccounts.selector
+  if (result.serviceAccounts?.selector !== undefined && typeof result.serviceAccounts.selector !== 'string') {
+    result.serviceAccounts = {
+      ...result.serviceAccounts,
+      selector: undefined,
+    };
+  }
   return result;
 }
 
@@ -45,6 +63,52 @@ function sanitizeRules(rules: Rule[]): Rule[] {
     source: sanitizeEntityRule(rule.source),
     destination: sanitizeEntityRule(rule.destination),
   }));
+}
+
+/** Check if a value is a valid selector string (not an object or other type).
+ *  Returns true if the value is undefined, null, or a string.
+ */
+function isValidSelectorType(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'string';
+}
+
+/** Validate selector fields in all rules, returning human-readable warnings.
+ *  This catches cases where users mistakenly use object syntax instead of string selectors.
+ */
+function collectSelectorWarnings(rules: Rule[], direction: 'Ingress' | 'Egress'): string[] {
+  const warnings: string[] = [];
+
+  rules.forEach((rule, idx) => {
+    const ruleLabel = `${direction} rule ${idx + 1}`;
+
+    for (const side of ['source', 'destination'] as const) {
+      const entity = rule[side];
+      if (!entity) continue;
+      const sideLabel = side === 'source' ? 'source' : 'destination';
+
+      if (!isValidSelectorType(entity.selector)) {
+        warnings.push(`${ruleLabel}: ${sideLabel} selector should be a string, got object. Use selector: "app == 'foo'" syntax.`);
+      }
+      if (!isValidSelectorType(entity.notSelector)) {
+        warnings.push(`${ruleLabel}: ${sideLabel} notSelector should be a string, got object.`);
+      }
+      if (!isValidSelectorType(entity.namespaceSelector)) {
+        warnings.push(`${ruleLabel}: ${sideLabel} namespaceSelector should be a string, got object. Use namespaceSelector: "kubernetes.io/metadata.name == 'foo'" syntax.`);
+      }
+      if (entity.serviceAccounts && !isValidSelectorType(entity.serviceAccounts.selector)) {
+        warnings.push(`${ruleLabel}: ${sideLabel} serviceAccounts.selector should be a string, got object.`);
+      }
+    }
+  });
+
+  return warnings;
+}
+
+/** Sanitize a policy-level selector field, returning undefined if not a string. */
+function sanitizePolicySelector(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') return value;
+  return undefined;
 }
 
 /** Validate ports and CIDRs in all rules, returning human-readable warnings.
@@ -171,9 +235,9 @@ export function parseYaml(yamlStr: string): ParseResult {
     kind: raw.kind,
     tier: raw.spec.tier || 'default',
     order: raw.spec.order,
-    selector: raw.spec.selector || 'all()',
-    namespaceSelector: raw.spec.namespaceSelector,
-    serviceAccountSelector: raw.spec.serviceAccountSelector,
+    selector: sanitizePolicySelector(raw.spec.selector) || 'all()',
+    namespaceSelector: sanitizePolicySelector(raw.spec.namespaceSelector),
+    serviceAccountSelector: sanitizePolicySelector(raw.spec.serviceAccountSelector),
     types,
     ingressRules: sanitizeRules(raw.spec.ingress || []),
     egressRules: sanitizeRules(raw.spec.egress || []),
@@ -185,7 +249,20 @@ export function parseYaml(yamlStr: string): ParseResult {
   const warnings = [
     ...collectWarnings(resolved.ingressRules, 'Ingress'),
     ...collectWarnings(resolved.egressRules, 'Egress'),
+    ...collectSelectorWarnings(raw.spec.ingress || [], 'Ingress'),
+    ...collectSelectorWarnings(raw.spec.egress || [], 'Egress'),
   ];
+
+  // Warn about malformed policy-level selectors
+  if (!isValidSelectorType(raw.spec.selector)) {
+    warnings.push('Policy selector should be a string, got object. Use selector: "app == \'foo\'" syntax.');
+  }
+  if (!isValidSelectorType(raw.spec.namespaceSelector)) {
+    warnings.push('Policy namespaceSelector should be a string, got object. Use namespaceSelector: "kubernetes.io/metadata.name == \'foo\'" syntax.');
+  }
+  if (!isValidSelectorType(raw.spec.serviceAccountSelector)) {
+    warnings.push('Policy serviceAccountSelector should be a string, got object.');
+  }
 
   // Compute YAML source line ranges for each rule (for editor highlighting)
   const ruleLineRanges = mapRuleLineRanges(yamlStr);

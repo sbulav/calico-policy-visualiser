@@ -975,3 +975,203 @@ spec:
     expect(nets).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sanitization — selector fields as objects (React error #31 fix)
+// ---------------------------------------------------------------------------
+
+describe('parseYaml — sanitization of selector fields', () => {
+  it('sanitizes namespaceSelector when it is an object instead of string', () => {
+    // This is the exact bug: namespaceSelector as {namespace: foo} instead of string
+    const yaml = `apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: test-policy
+  namespace: default
+spec:
+  selector: all()
+  types:
+  - Ingress
+  ingress:
+  - action: Allow
+    source:
+      namespaceSelector:
+        namespace: production`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy).not.toBeNull();
+    // namespaceSelector should be sanitized to undefined
+    expect(result.policy!.ingressRules[0].source?.namespaceSelector).toBeUndefined();
+    // Should have a warning about the malformed selector
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('namespaceSelector should be a string');
+  });
+
+  it('sanitizes selector when it is an object instead of string', () => {
+    const yaml = `apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: test-policy
+  namespace: default
+spec:
+  selector: all()
+  types:
+  - Ingress
+  ingress:
+  - action: Allow
+    source:
+      selector:
+        app: web`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.ingressRules[0].source?.selector).toBeUndefined();
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('selector should be a string');
+  });
+
+  it('sanitizes notSelector when it is an object', () => {
+    const yaml = `apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: test-policy
+  namespace: default
+spec:
+  selector: all()
+  types:
+  - Egress
+  egress:
+  - action: Allow
+    destination:
+      nets:
+      - 10.0.0.0/8
+      notSelector:
+        app: db`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.egressRules[0].destination?.notSelector).toBeUndefined();
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('notSelector should be a string');
+  });
+
+  it('sanitizes serviceAccounts.selector when it is an object', () => {
+    const yaml = `apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: test-policy
+  namespace: default
+spec:
+  selector: all()
+  types:
+  - Ingress
+  ingress:
+  - action: Allow
+    source:
+      serviceAccounts:
+        selector:
+          role: admin`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.ingressRules[0].source?.serviceAccounts?.selector).toBeUndefined();
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('serviceAccounts.selector should be a string');
+  });
+
+  it('sanitizes policy-level selector when it is an object', () => {
+    const yaml = `apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: test-policy
+  namespace: default
+spec:
+  selector:
+    app: web
+  types:
+  - Ingress`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    // Should fall back to 'all()' when selector is invalid
+    expect(result.policy!.selector).toBe('all()');
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('Policy selector should be a string');
+  });
+
+  it('sanitizes policy-level namespaceSelector when it is an object', () => {
+    const yaml = `apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: test-policy
+spec:
+  selector: all()
+  namespaceSelector:
+    environment: production
+  types:
+  - Ingress`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.namespaceSelector).toBeUndefined();
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('Policy namespaceSelector should be a string');
+  });
+
+  it('sanitizes policy-level serviceAccountSelector when it is an object', () => {
+    const yaml = `apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: test-policy
+  namespace: default
+spec:
+  selector: all()
+  serviceAccountSelector:
+    role: admin
+  types:
+  - Ingress`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.serviceAccountSelector).toBeUndefined();
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('Policy serviceAccountSelector should be a string');
+  });
+
+  it('accepts valid string selectors without warnings', () => {
+    const yaml = `apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: test-policy
+  namespace: default
+spec:
+  selector: app == 'web'
+  namespaceSelector: env == 'prod'
+  serviceAccountSelector: role == 'admin'
+  types:
+  - Ingress
+  ingress:
+  - action: Allow
+    source:
+      selector: app == 'api'
+      namespaceSelector: "kubernetes.io/metadata.name == 'production'"
+      serviceAccounts:
+        selector: role == 'dns'
+    destination:
+      notSelector: app == 'db'`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.selector).toBe("app == 'web'");
+    expect(result.policy!.namespaceSelector).toBe("env == 'prod'");
+    expect(result.policy!.serviceAccountSelector).toBe("role == 'admin'");
+    expect(result.policy!.ingressRules[0].source?.selector).toBe("app == 'api'");
+    expect(result.policy!.ingressRules[0].source?.namespaceSelector).toBe("kubernetes.io/metadata.name == 'production'");
+    expect(result.policy!.ingressRules[0].source?.serviceAccounts?.selector).toBe("role == 'dns'");
+    expect(result.policy!.ingressRules[0].destination?.notSelector).toBe("app == 'db'");
+    // No selector-related warnings
+    const selectorWarnings = result.warnings.filter(w => w.includes('selector'));
+    expect(selectorWarnings).toEqual([]);
+  });
+});

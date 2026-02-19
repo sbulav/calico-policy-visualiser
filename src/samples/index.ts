@@ -403,8 +403,8 @@ spec:
         nets:
           - 203.0.113.0/24
           - 198.51.100.10/32
-         ports:
-           - 443`,
+        ports:
+          - 443`,
   },
   {
     id: 'allow-egress-to-service',

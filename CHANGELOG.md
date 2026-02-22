@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.3] - 2026-02-22
+
+### Added
+
+- **Deep links for auto-loading policies from URL.** The app can now load YAML from `?url=` (fetch) or `?policy=` / `#policy=` (inline URL-encoded YAML) on page open. This enables direct links from external tools such as Kubernetes policy viewers.
+
 ## [0.8.2] - 2026-02-18
 
 ### Fixed

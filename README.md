@@ -58,6 +58,29 @@ Resize panels by dragging the divider handles. Collapse the explanation panel wi
 
 Example: load the NetworkPolicy sample. One ingress rule appears in the "In Cluster" group. The edge is green (Allow). The explanation panel shows "[ALLOW] incoming TCP to port 6379 (Redis)".
 
+## Deep links (auto-load policy from URL)
+
+The app can auto-load a policy from the URL. This is useful for integrating with other tools (e.g., a Kubernetes policy viewer) so users can click a link and land here with the policy already loaded.
+
+Supported parameters (query string or hash):
+
+- `?url=` — fetch YAML from a remote URL (recommended for real policies)
+- `?policy=` — inline, URL-encoded YAML (useful for short examples)
+- `#policy=` — same as `?policy=`, but in the hash fragment
+
+Examples (GitHub Pages):
+
+```text
+https://sbulav.github.io/calico-visualiser/?url=https%3A%2F%2Fexample.com%2Fpolicies%2Fdefault-deny.yaml
+https://sbulav.github.io/calico-visualiser/?policy=apiVersion%3Aprojectcalico.org%2Fv3%0Akind%3ANetworkPolicy%0A...
+https://sbulav.github.io/calico-visualiser/#policy=apiVersion%3Aprojectcalico.org%2Fv3%0Akind%3ANetworkPolicy%0A...
+```
+
+Notes:
+
+- `?url=` requires the remote server to allow cross-origin requests (CORS).
+- `?policy=` is limited by URL length. To avoid proxy and browser limits, treat ~2 KB total URL as a safe ceiling and prefer `?url=` for larger policies.
+
 ## Development
 
 ### Commands

@@ -11,6 +11,20 @@ import { useDebouncedCallback } from '../../hooks/useDebouncedCallback';
 import type { SamplePolicy } from '../../samples';
 import { SAMPLE_POLICIES } from '../../samples';
 
+function getPolicyParams() {
+  if (typeof window === 'undefined') {
+    return { url: null, policy: null };
+  }
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+
+  return {
+    url: searchParams.get('url') ?? hashParams.get('url'),
+    policy: searchParams.get('policy') ?? hashParams.get('policy'),
+  };
+}
+
 export default function AppLayout() {
   const { state, dispatch } = usePolicyContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -45,9 +59,51 @@ export default function AppLayout() {
     parseAndDispatch(yamlContent);
   }, [dispatch, parseAndDispatch, debouncedParse]);
 
+  useEffect(() => {
+    const { url, policy } = getPolicyParams();
+    if (!url && !policy) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const loadFromUrl = async () => {
+      if (url) {
+        try {
+          const response = await fetch(url, {
+            signal: controller.signal,
+            headers: {
+              Accept: 'text/yaml, text/plain, */*',
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to fetch policy (${response.status} ${response.statusText})`);
+          }
+
+          const yamlContent = await response.text();
+          loadYaml(yamlContent);
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          const message = error instanceof Error ? error.message : 'Failed to load policy from URL.';
+          dispatch({ type: 'SET_ERROR', payload: message });
+        }
+        return;
+      }
+
+      if (policy) {
+        loadYaml(policy);
+      }
+    };
+
+    void loadFromUrl();
+
+    return () => controller.abort();
+  }, [loadYaml, dispatch]);
+
   // Auto-load default deny-all policy on first mount if editor is empty.
   useEffect(() => {
-    if (!state.yamlContent) {
+    const { url, policy } = getPolicyParams();
+    if (!state.yamlContent && !url && !policy) {
       const defaultDeny = SAMPLE_POLICIES.find(p => p.id === 'default-deny-all');
       if (defaultDeny) {
         loadYaml(defaultDeny.yaml);

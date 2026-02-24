@@ -1,4 +1,4 @@
-import { decompressFromEncodedURIComponent } from 'lz-string';
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string';
 
 type DecodePolicyResult = {
   yaml: string | null;
@@ -13,16 +13,24 @@ export function decodePolicyParam(value: string): DecodePolicyResult {
   if (value.startsWith('lz:')) {
     const encoded = value.slice(3);
     if (!encoded) {
-      return { yaml: null, error: 'Compressed policy payload is empty.' };
+      return { yaml: null, error: 'Deep link policy payload is empty.' };
     }
 
     const decompressed = decompressFromEncodedURIComponent(encoded);
     if (!decompressed) {
-      return { yaml: null, error: 'Failed to decompress policy parameter.' };
+      return { yaml: null, error: 'Failed to decompress deep link policy payload.' };
     }
 
     return { yaml: decompressed, error: null };
   }
 
   return { yaml: value, error: null };
+}
+
+export function encodePolicyParam(yaml: string, compress: boolean): string {
+  if (compress) {
+    return `lz:${compressToEncodedURIComponent(yaml)}`;
+  }
+
+  return encodeURIComponent(yaml);
 }

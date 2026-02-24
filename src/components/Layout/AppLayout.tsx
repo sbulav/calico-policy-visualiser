@@ -4,6 +4,7 @@ import YamlViewer from '../Editor/YamlViewer';
 import PolicyFlow from '../Visualization/PolicyFlow';
 import PolicyExplanation from '../Explanation/PolicyExplanation';
 import ExamplesModal from './ExamplesModal';
+import UrlPolicyModal from './UrlPolicyModal';
 import AccessTesterPanel from '../AccessTester/AccessTesterPanel';
 import { usePolicyContext } from '../../context/usePolicyContext';
 import { parseYaml } from '../../lib/parser/yamlParser';
@@ -12,17 +13,47 @@ import { useDebouncedCallback } from '../../hooks/useDebouncedCallback';
 import type { SamplePolicy } from '../../samples';
 import { SAMPLE_POLICIES } from '../../samples';
 
+function parseParams(raw: string, plusAsSpace: boolean) {
+  const params: Record<string, string> = {};
+  if (!raw) {
+    return params;
+  }
+
+  const trimmed = raw.replace(/^[?#]/, '');
+  if (!trimmed) {
+    return params;
+  }
+
+  for (const part of trimmed.split('&')) {
+    if (!part) continue;
+    const [rawKey, ...rest] = part.split('=');
+    if (!rawKey) continue;
+    const rawValue = rest.join('=');
+    const keyInput = plusAsSpace ? rawKey.replace(/\+/g, ' ') : rawKey;
+    const valueInput = plusAsSpace ? rawValue.replace(/\+/g, ' ') : rawValue;
+    try {
+      const key = decodeURIComponent(keyInput);
+      const value = decodeURIComponent(valueInput);
+      params[key] = value;
+    } catch {
+      continue;
+    }
+  }
+
+  return params;
+}
+
 function getPolicyParams() {
   if (typeof window === 'undefined') {
     return { url: null, policy: null };
   }
 
-  const searchParams = new URLSearchParams(window.location.search);
-  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const searchParams = parseParams(window.location.search, true);
+  const hashParams = parseParams(window.location.hash, false);
 
   return {
-    url: searchParams.get('url') ?? hashParams.get('url'),
-    policy: searchParams.get('policy') ?? hashParams.get('policy'),
+    url: searchParams.url ?? hashParams.url ?? null,
+    policy: searchParams.policy ?? hashParams.policy ?? null,
   };
 }
 
@@ -36,6 +67,7 @@ export default function AppLayout() {
   const [isResizing, setIsResizing] = useState(false);
   const [isResizingExplanation, setIsResizingExplanation] = useState(false);
   const [examplesOpen, setExamplesOpen] = useState(false);
+  const [urlModalOpen, setUrlModalOpen] = useState(false);
   const [testerOpen, setTesterOpen] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState(320);
   const [isResizingRight, setIsResizingRight] = useState(false);
@@ -61,37 +93,41 @@ export default function AppLayout() {
     parseAndDispatch(yamlContent);
   }, [dispatch, parseAndDispatch, debouncedParse]);
 
+  const fetchAndLoadUrl = useCallback(async (url: string) => {
+    urlLoadControllerRef.current?.abort();
+    const controller = new AbortController();
+    urlLoadControllerRef.current = controller;
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: 'text/yaml, text/plain, */*',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch policy (${response.status} ${response.statusText})`);
+      }
+
+      const yamlContent = await response.text();
+      loadYaml(yamlContent);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const message = error instanceof Error ? error.message : 'Failed to load policy from URL.';
+      dispatch({ type: 'SET_ERROR', payload: message });
+    }
+  }, [dispatch, loadYaml]);
+
   const loadFromLocation = useCallback(() => {
     const { url, policy } = getPolicyParams();
     if (!url && !policy) {
       return;
     }
 
-    urlLoadControllerRef.current?.abort();
-    const controller = new AbortController();
-    urlLoadControllerRef.current = controller;
-
     const load = async () => {
       if (url) {
-        try {
-          const response = await fetch(url, {
-            signal: controller.signal,
-            headers: {
-              Accept: 'text/yaml, text/plain, */*',
-            },
-          });
-
-          if (!response.ok) {
-            throw new Error(`Failed to fetch policy (${response.status} ${response.statusText})`);
-          }
-
-          const yamlContent = await response.text();
-          loadYaml(yamlContent);
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          const message = error instanceof Error ? error.message : 'Failed to load policy from URL.';
-          dispatch({ type: 'SET_ERROR', payload: message });
-        }
+        await fetchAndLoadUrl(url);
         return;
       }
 
@@ -109,7 +145,7 @@ export default function AppLayout() {
     };
 
     void load();
-  }, [dispatch, loadYaml]);
+  }, [dispatch, fetchAndLoadUrl, loadYaml]);
 
   useEffect(() => {
     loadFromLocation();
@@ -154,6 +190,11 @@ export default function AppLayout() {
   const handleFileImport = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
+
+  const handleUrlLoad = useCallback((url: string) => {
+    setUrlModalOpen(false);
+    void fetchAndLoadUrl(url);
+  }, [fetchAndLoadUrl]);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -288,6 +329,15 @@ export default function AppLayout() {
             className="hidden"
           />
           <button
+            onClick={() => setUrlModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 transition-colors cursor-pointer"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 010 5.656m-1.414-1.414a2 2 0 010-2.828m3.536-3.536a6 6 0 010 8.485m-7.071-7.071a6 6 0 000 8.485M10.172 13.828a4 4 0 010-5.656" />
+            </svg>
+            URL / Share
+          </button>
+          <button
             onClick={handleFileImport}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 transition-colors cursor-pointer"
           >
@@ -388,6 +438,12 @@ export default function AppLayout() {
         open={examplesOpen}
         onClose={() => setExamplesOpen(false)}
         onSelect={handleExampleSelect}
+      />
+      <UrlPolicyModal
+        open={urlModalOpen}
+        onClose={() => setUrlModalOpen(false)}
+        yamlContent={state.yamlContent}
+        onLoadUrl={handleUrlLoad}
       />
     </div>
   );

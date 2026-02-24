@@ -29,6 +29,7 @@ function getPolicyParams() {
 export default function AppLayout() {
   const { state, dispatch } = usePolicyContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const urlLoadControllerRef = useRef<AbortController | null>(null);
   const [explanationCollapsed, setExplanationCollapsed] = useState(false);
   const [explanationHeight, setExplanationHeight] = useState(208);
   const [leftPanelWidth, setLeftPanelWidth] = useState(350);
@@ -60,14 +61,17 @@ export default function AppLayout() {
     parseAndDispatch(yamlContent);
   }, [dispatch, parseAndDispatch, debouncedParse]);
 
-  useEffect(() => {
+  const loadFromLocation = useCallback(() => {
     const { url, policy } = getPolicyParams();
     if (!url && !policy) {
       return;
     }
 
+    urlLoadControllerRef.current?.abort();
     const controller = new AbortController();
-    const loadFromUrl = async () => {
+    urlLoadControllerRef.current = controller;
+
+    const load = async () => {
       if (url) {
         try {
           const response = await fetch(url, {
@@ -104,10 +108,25 @@ export default function AppLayout() {
       }
     };
 
-    void loadFromUrl();
+    void load();
+  }, [dispatch, loadYaml]);
 
-    return () => controller.abort();
-  }, [loadYaml, dispatch]);
+  useEffect(() => {
+    loadFromLocation();
+
+    const handleLocationChange = () => {
+      loadFromLocation();
+    };
+
+    window.addEventListener('hashchange', handleLocationChange);
+    window.addEventListener('popstate', handleLocationChange);
+
+    return () => {
+      window.removeEventListener('hashchange', handleLocationChange);
+      window.removeEventListener('popstate', handleLocationChange);
+      urlLoadControllerRef.current?.abort();
+    };
+  }, [loadFromLocation]);
 
   // Auto-load default deny-all policy on first mount if editor is empty.
   useEffect(() => {

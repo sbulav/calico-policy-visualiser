@@ -61,6 +61,8 @@ function getActionColors(action: RuleAction): { card: string; dot: string } {
       return { card: 'bg-amber-500/8 border-amber-500/20 text-amber-300', dot: 'bg-amber-400' };
     case 'Pass':
       return { card: 'bg-blue-500/8 border-blue-500/20 text-blue-300', dot: 'bg-blue-400' };
+    default:
+      return { card: 'bg-slate-500/8 border-slate-500/20 text-slate-300', dot: 'bg-slate-400' };
   }
 }
 

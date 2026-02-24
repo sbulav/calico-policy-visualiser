@@ -7,6 +7,7 @@ import ExamplesModal from './ExamplesModal';
 import AccessTesterPanel from '../AccessTester/AccessTesterPanel';
 import { usePolicyContext } from '../../context/usePolicyContext';
 import { parseYaml } from '../../lib/parser/yamlParser';
+import { decodePolicyParam } from '../../lib/urlPolicy';
 import { useDebouncedCallback } from '../../hooks/useDebouncedCallback';
 import type { SamplePolicy } from '../../samples';
 import { SAMPLE_POLICIES } from '../../samples';
@@ -91,7 +92,15 @@ export default function AppLayout() {
       }
 
       if (policy) {
-        loadYaml(policy);
+        const result = decodePolicyParam(policy);
+        if (result.error) {
+          dispatch({ type: 'SET_ERROR', payload: result.error });
+          return;
+        }
+
+        if (result.yaml) {
+          loadYaml(result.yaml);
+        }
       }
     };
 

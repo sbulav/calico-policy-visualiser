@@ -65,7 +65,8 @@ The app can auto-load a policy from the URL. This is useful for integrating with
 Supported parameters (query string or hash):
 
 - `?url=` — fetch YAML from a remote URL (recommended for real policies)
-- `?policy=` — inline, URL-encoded YAML (useful for short examples)
+- `?policy=` — inline YAML (useful for short examples)
+- `?policy=lz:` — inline LZ-String compressed YAML (recommended for longer inline policies)
 - `#policy=` — same as `?policy=`, but in the hash fragment
 
 Examples (GitHub Pages):
@@ -73,13 +74,25 @@ Examples (GitHub Pages):
 ```text
 https://sbulav.github.io/calico-visualiser/?url=https%3A%2F%2Fexample.com%2Fpolicies%2Fdefault-deny.yaml
 https://sbulav.github.io/calico-visualiser/?policy=apiVersion%3Aprojectcalico.org%2Fv3%0Akind%3ANetworkPolicy%0A...
+https://sbulav.github.io/calico-visualiser/?policy=lz:N4Igzg9gTgpgBAHjAJgQwE4EsBOBLAOwA0IAnAsQG4C2ARhAHoB8c8A===
 https://sbulav.github.io/calico-visualiser/#policy=apiVersion%3Aprojectcalico.org%2Fv3%0Akind%3ANetworkPolicy%0A...
+https://sbulav.github.io/calico-visualiser/#policy=lz:N4Igzg9gTgpgBAHjAJgQwE4EsBOBLAOwA0IAnAsQG4C2ARhAHoB8c8A===
 ```
 
 Notes:
 
 - `?url=` requires the remote server to allow cross-origin requests (CORS).
-- `?policy=` is limited by URL length. To avoid proxy and browser limits, treat ~2 KB total URL as a safe ceiling and prefer `?url=` for larger policies.
+- Inline `?policy=` is limited by URL length. To avoid proxy and browser limits, treat ~2 KB total URL as a safe ceiling and prefer `?url=` for larger policies.
+- `?policy=lz:` is compressed and more space-efficient, but still subject to URL length limits.
+
+Encoding example (JS):
+
+```js
+import { compressToEncodedURIComponent } from 'lz-string';
+
+const param = `lz:${compressToEncodedURIComponent(yaml)}`;
+const url = `https://sbulav.github.io/calico-visualiser/?policy=${param}`;
+```
 
 ## Development
 

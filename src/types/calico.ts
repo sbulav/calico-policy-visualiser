@@ -59,7 +59,7 @@ interface PolicyMetadata {
   annotations?: Record<string, string>;
 }
 
-interface KubernetesLabelSelectorRequirement {
+export interface KubernetesLabelSelectorRequirement {
   key: string;
   operator: 'In' | 'NotIn' | 'Exists' | 'DoesNotExist';
   values?: string[];
@@ -70,35 +70,41 @@ export interface KubernetesLabelSelector {
   matchExpressions?: KubernetesLabelSelectorRequirement[];
 }
 
-interface KubernetesIPBlock {
+export interface KubernetesIPBlock {
   cidr: string;
   except?: string[];
 }
 
-interface KubernetesNetworkPolicyPeer {
+export interface KubernetesNetworkPolicyPeer {
   podSelector?: KubernetesLabelSelector;
   namespaceSelector?: KubernetesLabelSelector;
   ipBlock?: KubernetesIPBlock;
 }
 
-interface KubernetesNetworkPolicyPort {
+export interface KubernetesNetworkPolicyPort {
   protocol?: 'TCP' | 'UDP' | 'SCTP';
   port?: number | string;
   endPort?: number;
 }
 
-interface KubernetesNetworkPolicyIngressRule {
+export interface KubernetesNetworkPolicyIngressRule {
   from?: KubernetesNetworkPolicyPeer[];
   ports?: KubernetesNetworkPolicyPort[];
 }
 
-interface KubernetesNetworkPolicyEgressRule {
+export interface KubernetesNetworkPolicyEgressRule {
   to?: KubernetesNetworkPolicyPeer[];
   ports?: KubernetesNetworkPolicyPort[];
 }
 
+export interface KubernetesNetworkPolicySpec {
+  podSelector?: KubernetesLabelSelector;
+  policyTypes?: PolicyType[];
+  ingress?: KubernetesNetworkPolicyIngressRule[];
+  egress?: KubernetesNetworkPolicyEgressRule[];
+}
+
 interface PolicySpec {
-  // Calico fields
   order?: number;
   tier?: string;
   selector?: string;
@@ -111,12 +117,6 @@ interface PolicySpec {
   preDNAT?: boolean;
   applyOnForward?: boolean;
   performanceHints?: string[];
-
-  // Kubernetes fields
-  podSelector?: KubernetesLabelSelector;
-  policyTypes?: PolicyType[];
-  k8sIngress?: KubernetesNetworkPolicyIngressRule[];
-  k8sEgress?: KubernetesNetworkPolicyEgressRule[];
 }
 
 export interface CalicoPolicy {
@@ -126,12 +126,16 @@ export interface CalicoPolicy {
   spec: PolicySpec;
 }
 
+export interface KubernetesNetworkPolicy {
+  apiVersion: string;
+  kind: 'NetworkPolicy';
+  metadata: PolicyMetadata;
+  spec: KubernetesNetworkPolicySpec;
+}
+
 export type PolicySource = 'calico' | 'kubernetes';
 
-// Resolved policy info for visualization
-export interface ResolvedPolicy {
-  raw: CalicoPolicy;
-  policySource: PolicySource;
+interface ResolvedPolicyBase {
   apiVersion: string;
   name: string;
   namespace?: string;
@@ -147,3 +151,16 @@ export interface ResolvedPolicy {
   ingressDefault: 'deny' | 'allow' | 'none';
   egressDefault: 'deny' | 'allow' | 'none';
 }
+
+export interface ResolvedCalicoPolicy extends ResolvedPolicyBase {
+  raw: CalicoPolicy;
+  policySource: 'calico';
+}
+
+export interface ResolvedKubernetesPolicy extends ResolvedPolicyBase {
+  raw: KubernetesNetworkPolicy;
+  policySource: 'kubernetes';
+}
+
+// Resolved policy info for visualization
+export type ResolvedPolicy = ResolvedCalicoPolicy | ResolvedKubernetesPolicy;

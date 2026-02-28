@@ -1,12 +1,17 @@
 import yaml from 'js-yaml';
 import type {
   CalicoPolicy,
+  KubernetesNetworkPolicy,
+  KubernetesNetworkPolicySpec,
+  KubernetesNetworkPolicyPeer,
+  KubernetesNetworkPolicyPort,
+  KubernetesNetworkPolicyIngressRule,
+  KubernetesNetworkPolicyEgressRule,
   PolicyKind,
   ResolvedPolicy,
   Rule,
   EntityRule,
   Port,
-  KubernetesLabelSelector,
 } from '../../types/calico';
 import { mapRuleLineRanges, type RuleLineRanges } from './yamlLineMapper';
 import { isValidPort, isValidCidr } from '../ipUtils';
@@ -22,40 +27,6 @@ interface ParseResult {
 const CALICO_API_VERSION = 'projectcalico.org/v3';
 const K8S_API_VERSION = 'networking.k8s.io/v1';
 const CALICO_KINDS: PolicyKind[] = ['NetworkPolicy', 'GlobalNetworkPolicy'];
-
-interface K8sNetworkPolicyPort {
-  protocol?: 'TCP' | 'UDP' | 'SCTP';
-  port?: number | string;
-  endPort?: number;
-}
-
-interface K8sIPBlock {
-  cidr: string;
-  except?: string[];
-}
-
-interface K8sNetworkPolicyPeer {
-  podSelector?: KubernetesLabelSelector;
-  namespaceSelector?: KubernetesLabelSelector;
-  ipBlock?: K8sIPBlock;
-}
-
-interface K8sNetworkPolicyIngressRule {
-  from?: K8sNetworkPolicyPeer[];
-  ports?: K8sNetworkPolicyPort[];
-}
-
-interface K8sNetworkPolicyEgressRule {
-  to?: K8sNetworkPolicyPeer[];
-  ports?: K8sNetworkPolicyPort[];
-}
-
-interface K8sNetworkPolicySpec {
-  podSelector?: KubernetesLabelSelector;
-  policyTypes?: Array<'Ingress' | 'Egress'>;
-  ingress?: K8sNetworkPolicyIngressRule[];
-  egress?: K8sNetworkPolicyEgressRule[];
-}
 
 // Filter null/undefined values that js-yaml produces from incomplete YAML list
 // items (e.g. `- ` with no value). Without this, downstream code like ipUtils
@@ -244,15 +215,6 @@ export function parseYaml(yamlStr: string): ParseResult {
     };
   }
 
-  if (!parsedResult) {
-    return {
-      policy: null,
-      error: 'Failed to parse policy document',
-      warnings: [],
-      ruleLineRanges: null,
-    };
-  }
-
   const ruleLineRanges = mapRuleLineRanges(yamlStr);
   return {
     policy: parsedResult.policy,
@@ -337,12 +299,12 @@ function parseKubernetesPolicy(doc: Record<string, unknown>): { policy: Resolved
     throw new Error(`Unsupported kind: "${doc.kind}". Kubernetes networking.k8s.io/v1 supports "NetworkPolicy" only`);
   }
 
-  const rawDoc = doc as unknown as CalicoPolicy;
+  const rawDoc = doc as unknown as KubernetesNetworkPolicy;
   if (!rawDoc.metadata?.name) {
     throw new Error('Missing metadata.name');
   }
 
-  const spec = (doc.spec ?? {}) as K8sNetworkPolicySpec;
+  const spec = (doc.spec ?? {}) as KubernetesNetworkPolicySpec;
   const warnings: string[] = [];
 
   const hasEgressSection = Array.isArray(spec.egress);
@@ -384,7 +346,7 @@ function parseKubernetesPolicy(doc: Record<string, unknown>): { policy: Resolved
 }
 
 function normalizeK8sIngressRules(
-  rules: K8sNetworkPolicyIngressRule[] | undefined,
+  rules: KubernetesNetworkPolicyIngressRule[] | undefined,
   warnings: string[],
 ): Rule[] {
   if (!Array.isArray(rules)) return [];
@@ -420,7 +382,7 @@ function normalizeK8sIngressRules(
 }
 
 function normalizeK8sEgressRules(
-  rules: K8sNetworkPolicyEgressRule[] | undefined,
+  rules: KubernetesNetworkPolicyEgressRule[] | undefined,
   warnings: string[],
 ): Rule[] {
   if (!Array.isArray(rules)) return [];
@@ -458,7 +420,7 @@ function normalizeK8sEgressRules(
   return result;
 }
 
-function normalizeK8sPeer(peer: K8sNetworkPolicyPeer | undefined, ruleLabel: string, warnings: string[]): EntityRule | undefined {
+function normalizeK8sPeer(peer: KubernetesNetworkPolicyPeer | undefined, ruleLabel: string, warnings: string[]): EntityRule | undefined {
   if (!peer) return undefined;
 
   const hasIpBlock = !!peer.ipBlock;
@@ -479,7 +441,7 @@ function normalizeK8sPeer(peer: K8sNetworkPolicyPeer | undefined, ruleLabel: str
 }
 
 function normalizeK8sPort(
-  portSpec: K8sNetworkPolicyPort | undefined,
+  portSpec: KubernetesNetworkPolicyPort | undefined,
   ruleLabel: string,
   warnings: string[],
 ): { protocol?: 'TCP' | 'UDP' | 'SCTP'; port?: Port } {

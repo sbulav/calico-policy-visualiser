@@ -24,6 +24,8 @@ export function labelSelectorToExpression(selector: KubernetesLabelSelector | un
       } else if (expr.operator === 'In') {
         const values = expr.values ?? [];
         if (values.length === 0) {
+          // Kubernetes requires non-empty values for In. Convert this invalid
+          // selector into an always-false expression so it never matches.
           parts.push('has(__k8s_invalid__) && !has(__k8s_invalid__)');
         } else {
           parts.push(`${expr.key} in {${values.map(quote).join(', ')}}`);

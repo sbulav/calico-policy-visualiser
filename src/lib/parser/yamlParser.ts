@@ -1,7 +1,16 @@
 import yaml from 'js-yaml';
-import type { CalicoPolicy, PolicyKind, ResolvedPolicy, Rule, EntityRule, Port } from '../../types/calico';
+import type {
+  CalicoPolicy,
+  PolicyKind,
+  ResolvedPolicy,
+  Rule,
+  EntityRule,
+  Port,
+  KubernetesLabelSelector,
+} from '../../types/calico';
 import { mapRuleLineRanges, type RuleLineRanges } from './yamlLineMapper';
 import { isValidPort, isValidCidr } from '../ipUtils';
+import { labelSelectorToExpression } from './k8sSelector';
 
 interface ParseResult {
   policy: ResolvedPolicy | null;
@@ -10,7 +19,43 @@ interface ParseResult {
   ruleLineRanges: RuleLineRanges | null;
 }
 
-const VALID_KINDS: PolicyKind[] = ['NetworkPolicy', 'GlobalNetworkPolicy'];
+const CALICO_API_VERSION = 'projectcalico.org/v3';
+const K8S_API_VERSION = 'networking.k8s.io/v1';
+const CALICO_KINDS: PolicyKind[] = ['NetworkPolicy', 'GlobalNetworkPolicy'];
+
+interface K8sNetworkPolicyPort {
+  protocol?: 'TCP' | 'UDP' | 'SCTP';
+  port?: number | string;
+  endPort?: number;
+}
+
+interface K8sIPBlock {
+  cidr: string;
+  except?: string[];
+}
+
+interface K8sNetworkPolicyPeer {
+  podSelector?: KubernetesLabelSelector;
+  namespaceSelector?: KubernetesLabelSelector;
+  ipBlock?: K8sIPBlock;
+}
+
+interface K8sNetworkPolicyIngressRule {
+  from?: K8sNetworkPolicyPeer[];
+  ports?: K8sNetworkPolicyPort[];
+}
+
+interface K8sNetworkPolicyEgressRule {
+  to?: K8sNetworkPolicyPeer[];
+  ports?: K8sNetworkPolicyPort[];
+}
+
+interface K8sNetworkPolicySpec {
+  podSelector?: KubernetesLabelSelector;
+  policyTypes?: Array<'Ingress' | 'Egress'>;
+  ingress?: K8sNetworkPolicyIngressRule[];
+  egress?: K8sNetworkPolicyEgressRule[];
+}
 
 // Filter null/undefined values that js-yaml produces from incomplete YAML list
 // items (e.g. `- ` with no value). Without this, downstream code like ipUtils
@@ -175,39 +220,62 @@ export function parseYaml(yamlStr: string): ParseResult {
 
   const doc = parsed as Record<string, unknown>;
 
-  // Validate apiVersion
-  if (doc.apiVersion !== 'projectcalico.org/v3') {
+  let parsedResult: { policy: ResolvedPolicy; warnings: string[] };
+
+  try {
+    if (doc.apiVersion === CALICO_API_VERSION) {
+      parsedResult = parseCalicoPolicy(doc);
+    } else if (doc.apiVersion === K8S_API_VERSION) {
+      parsedResult = parseKubernetesPolicy(doc);
+    } else {
+      return {
+        policy: null,
+        error: `Unsupported apiVersion: "${doc.apiVersion}". Expected "${CALICO_API_VERSION}" or "${K8S_API_VERSION}"`,
+        warnings: [],
+        ruleLineRanges: null,
+      };
+    }
+  } catch (error) {
     return {
       policy: null,
-      error: `Unsupported apiVersion: "${doc.apiVersion}". Expected "projectcalico.org/v3"`,
+      error: error instanceof Error ? error.message : 'Failed to parse policy',
       warnings: [],
       ruleLineRanges: null,
     };
   }
 
-  // Validate kind
-  if (!VALID_KINDS.includes(doc.kind as PolicyKind)) {
+  if (!parsedResult) {
     return {
       policy: null,
-      error: `Unsupported kind: "${doc.kind}". Expected "NetworkPolicy" or "GlobalNetworkPolicy"`,
+      error: 'Failed to parse policy document',
       warnings: [],
       ruleLineRanges: null,
     };
+  }
+
+  const ruleLineRanges = mapRuleLineRanges(yamlStr);
+  return {
+    policy: parsedResult.policy,
+    error: null,
+    warnings: parsedResult.warnings,
+    ruleLineRanges,
+  };
+}
+
+function parseCalicoPolicy(doc: Record<string, unknown>): { policy: ResolvedPolicy; warnings: string[] } {
+  if (!CALICO_KINDS.includes(doc.kind as PolicyKind)) {
+    throw new Error('Unsupported kind for Calico policy');
   }
 
   const raw = doc as unknown as CalicoPolicy;
 
-  // Validate metadata
   if (!raw.metadata?.name) {
-    return { policy: null, error: 'Missing metadata.name', warnings: [], ruleLineRanges: null };
+    throw new Error('Missing metadata.name');
   }
-
-  // Validate spec
   if (!raw.spec) {
-    return { policy: null, error: 'Missing spec', warnings: [], ruleLineRanges: null };
+    throw new Error('Missing spec');
   }
 
-  // Resolve types
   const hasIngress = Array.isArray(raw.spec.ingress) && raw.spec.ingress.length > 0;
   const hasEgress = Array.isArray(raw.spec.egress) && raw.spec.egress.length > 0;
 
@@ -222,14 +290,13 @@ export function parseYaml(yamlStr: string): ParseResult {
     }
   }
 
-  // Determine defaults:
-  // If a direction is listed in types, the implicit default is deny (Calico semantics).
-  // If a direction is not listed in types, traffic is allowed through (not restricted).
   const ingressDefault = types.includes('Ingress') ? 'deny' : 'allow';
   const egressDefault = types.includes('Egress') ? 'deny' : 'allow';
 
   const resolved: ResolvedPolicy = {
     raw,
+    policySource: 'calico',
+    apiVersion: raw.apiVersion,
     name: raw.metadata.name,
     namespace: raw.metadata.namespace,
     kind: raw.kind,
@@ -241,11 +308,10 @@ export function parseYaml(yamlStr: string): ParseResult {
     types,
     ingressRules: sanitizeRules(raw.spec.ingress || []),
     egressRules: sanitizeRules(raw.spec.egress || []),
-    ingressDefault: ingressDefault as 'deny' | 'allow' | 'none',
-    egressDefault: egressDefault as 'deny' | 'allow' | 'none',
+    ingressDefault,
+    egressDefault,
   };
 
-  // Validate ports and CIDRs — collect non-blocking warnings
   const warnings = [
     ...collectWarnings(resolved.ingressRules, 'Ingress'),
     ...collectWarnings(resolved.egressRules, 'Egress'),
@@ -253,7 +319,6 @@ export function parseYaml(yamlStr: string): ParseResult {
     ...collectSelectorWarnings(raw.spec.egress || [], 'Egress'),
   ];
 
-  // Warn about malformed policy-level selectors
   if (!isValidSelectorType(raw.spec.selector)) {
     warnings.push('Policy selector should be a string, got object. Use selector: "app == \'foo\'" syntax.');
   }
@@ -264,8 +329,187 @@ export function parseYaml(yamlStr: string): ParseResult {
     warnings.push('Policy serviceAccountSelector should be a string, got object.');
   }
 
-  // Compute YAML source line ranges for each rule (for editor highlighting)
-  const ruleLineRanges = mapRuleLineRanges(yamlStr);
+  return { policy: resolved, warnings };
+}
 
-  return { policy: resolved, error: null, warnings, ruleLineRanges };
+function parseKubernetesPolicy(doc: Record<string, unknown>): { policy: ResolvedPolicy; warnings: string[] } {
+  if (doc.kind !== 'NetworkPolicy') {
+    throw new Error(`Unsupported kind: "${doc.kind}". Kubernetes networking.k8s.io/v1 supports "NetworkPolicy" only`);
+  }
+
+  const rawDoc = doc as unknown as CalicoPolicy;
+  if (!rawDoc.metadata?.name) {
+    throw new Error('Missing metadata.name');
+  }
+
+  const spec = (doc.spec ?? {}) as K8sNetworkPolicySpec;
+  const warnings: string[] = [];
+
+  const hasEgressSection = Array.isArray(spec.egress);
+  let types = spec.policyTypes;
+  if (!types || types.length === 0) {
+    types = hasEgressSection ? ['Ingress', 'Egress'] : ['Ingress'];
+  }
+
+  const normalizedIngress = normalizeK8sIngressRules(spec.ingress, warnings);
+  const normalizedEgress = normalizeK8sEgressRules(spec.egress, warnings);
+
+  const selector = labelSelectorToExpression(spec.podSelector) || 'all()';
+
+  const resolved: ResolvedPolicy = {
+    raw: rawDoc,
+    policySource: 'kubernetes',
+    apiVersion: K8S_API_VERSION,
+    name: rawDoc.metadata.name,
+    namespace: rawDoc.metadata.namespace,
+    kind: 'NetworkPolicy',
+    tier: 'kubernetes',
+    order: undefined,
+    selector,
+    namespaceSelector: undefined,
+    serviceAccountSelector: undefined,
+    types,
+    ingressRules: sanitizeRules(normalizedIngress),
+    egressRules: sanitizeRules(normalizedEgress),
+    ingressDefault: types.includes('Ingress') ? 'deny' : 'allow',
+    egressDefault: types.includes('Egress') ? 'deny' : 'allow',
+  };
+
+  warnings.push(
+    ...collectWarnings(resolved.ingressRules, 'Ingress'),
+    ...collectWarnings(resolved.egressRules, 'Egress'),
+  );
+
+  return { policy: resolved, warnings };
+}
+
+function normalizeK8sIngressRules(
+  rules: K8sNetworkPolicyIngressRule[] | undefined,
+  warnings: string[],
+): Rule[] {
+  if (!Array.isArray(rules)) return [];
+
+  const result: Rule[] = [];
+
+  for (const [idx, rule] of rules.entries()) {
+    const peers = !rule.from || rule.from.length === 0 ? [undefined] : rule.from;
+    const ports = !rule.ports || rule.ports.length === 0 ? [undefined] : rule.ports;
+
+    for (const peer of peers) {
+      const source = normalizeK8sPeer(peer, `Ingress rule ${idx + 1}`, warnings);
+      for (const portSpec of ports) {
+        const normalizedPort = normalizeK8sPort(portSpec, `Ingress rule ${idx + 1}`, warnings);
+        const nextRule: Rule = {
+          action: 'Allow',
+          source,
+        };
+
+        if (normalizedPort.protocol) {
+          nextRule.protocol = normalizedPort.protocol;
+        }
+        if (normalizedPort.port !== undefined) {
+          nextRule.destination = { ports: [normalizedPort.port] };
+        }
+
+        result.push(nextRule);
+      }
+    }
+  }
+
+  return result;
+}
+
+function normalizeK8sEgressRules(
+  rules: K8sNetworkPolicyEgressRule[] | undefined,
+  warnings: string[],
+): Rule[] {
+  if (!Array.isArray(rules)) return [];
+
+  const result: Rule[] = [];
+
+  for (const [idx, rule] of rules.entries()) {
+    const peers = !rule.to || rule.to.length === 0 ? [undefined] : rule.to;
+    const ports = !rule.ports || rule.ports.length === 0 ? [undefined] : rule.ports;
+
+    for (const peer of peers) {
+      const destination = normalizeK8sPeer(peer, `Egress rule ${idx + 1}`, warnings);
+      for (const portSpec of ports) {
+        const normalizedPort = normalizeK8sPort(portSpec, `Egress rule ${idx + 1}`, warnings);
+        const nextRule: Rule = {
+          action: 'Allow',
+          destination,
+        };
+
+        if (normalizedPort.protocol) {
+          nextRule.protocol = normalizedPort.protocol;
+        }
+        if (normalizedPort.port !== undefined) {
+          nextRule.destination = {
+            ...(nextRule.destination || {}),
+            ports: [normalizedPort.port],
+          };
+        }
+
+        result.push(nextRule);
+      }
+    }
+  }
+
+  return result;
+}
+
+function normalizeK8sPeer(peer: K8sNetworkPolicyPeer | undefined, ruleLabel: string, warnings: string[]): EntityRule | undefined {
+  if (!peer) return undefined;
+
+  const hasIpBlock = !!peer.ipBlock;
+  const hasSelector = !!peer.podSelector || !!peer.namespaceSelector;
+  if (hasIpBlock && hasSelector) {
+    warnings.push(`${ruleLabel}: ipBlock cannot be combined with podSelector/namespaceSelector in one peer`);
+  }
+
+  const selector = labelSelectorToExpression(peer.podSelector);
+  const namespaceSelector = labelSelectorToExpression(peer.namespaceSelector);
+
+  return {
+    selector,
+    namespaceSelector,
+    nets: peer.ipBlock?.cidr ? [peer.ipBlock.cidr] : undefined,
+    notNets: peer.ipBlock?.except,
+  };
+}
+
+function normalizeK8sPort(
+  portSpec: K8sNetworkPolicyPort | undefined,
+  ruleLabel: string,
+  warnings: string[],
+): { protocol?: 'TCP' | 'UDP' | 'SCTP'; port?: Port } {
+  if (!portSpec) {
+    return {};
+  }
+
+  const protocol = portSpec.protocol ?? (portSpec.port !== undefined ? 'TCP' : undefined);
+
+  if (portSpec.endPort !== undefined) {
+    if (typeof portSpec.port !== 'number') {
+      warnings.push(`${ruleLabel}: endPort requires numeric port; ignoring endPort`);
+      return {
+        protocol,
+        port: portSpec.port,
+      };
+    }
+
+    if (portSpec.endPort < portSpec.port) {
+      warnings.push(`${ruleLabel}: endPort ${portSpec.endPort} must be >= port ${portSpec.port}`);
+    }
+
+    return {
+      protocol,
+      port: `${portSpec.port}:${portSpec.endPort}`,
+    };
+  }
+
+  return {
+    protocol,
+    port: portSpec.port,
+  };
 }

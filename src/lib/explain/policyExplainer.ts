@@ -161,8 +161,11 @@ export function explainPolicy(policy: ResolvedPolicy): ExplanationSection[] {
   if (policy.namespace) {
     overviewItems.push(`Namespace: ${policy.namespace}`);
   }
-  overviewItems.push(`Tier: ${policy.tier}`);
-  if (policy.order !== undefined) {
+  overviewItems.push(`Source: ${policy.policySource === 'calico' ? 'Calico projectcalico.org/v3' : 'Kubernetes networking.k8s.io/v1'}`);
+  if (policy.policySource === 'calico') {
+    overviewItems.push(`Tier: ${policy.tier}`);
+  }
+  if (policy.policySource === 'calico' && policy.order !== undefined) {
     overviewItems.push(`Order: ${policy.order} (${policy.order < 100 ? 'high priority' : policy.order > 5000 ? 'low priority' : 'medium priority'})`);
   }
   overviewItems.push(`Applies to: ${policy.selector}`);
@@ -179,7 +182,7 @@ export function explainPolicy(policy: ResolvedPolicy): ExplanationSection[] {
 
   // Policy-level flags (preDNAT, applyOnForward, doNotTrack)
   const spec = policy.raw.spec;
-  const hasFlags = spec.preDNAT || spec.applyOnForward || spec.doNotTrack;
+  const hasFlags = policy.policySource === 'calico' && (spec.preDNAT || spec.applyOnForward || spec.doNotTrack);
   if (hasFlags) {
     const flagItems: string[] = [];
     if (spec.preDNAT) {
@@ -219,7 +222,7 @@ export function explainPolicy(policy: ResolvedPolicy): ExplanationSection[] {
     });
   }
 
-  // Defaults — show both Calico implicit default and effective default when they differ
+  // Defaults — show implicit deny behavior for managed directions.
   const defaultItems: string[] = [];
   if (policy.types.includes('Ingress')) {
     const effectiveIngress = computeEffectiveDefault(policy.ingressRules, 'ingress', policy.ingressDefault);

@@ -52,6 +52,7 @@ export interface CategoryGroup {
 }
 
 export interface PolicyNodeData {
+  policySource: 'calico' | 'kubernetes';
   name: string;
   namespace?: string;
   kind: string;

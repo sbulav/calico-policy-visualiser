@@ -1175,3 +1175,127 @@ spec:
     expect(selectorWarnings).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Kubernetes NetworkPolicy support
+// ---------------------------------------------------------------------------
+
+describe('parseYaml — Kubernetes NetworkPolicy', () => {
+  it('detects and parses a minimal Kubernetes NetworkPolicy', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-minimal
+  namespace: default
+spec:
+  podSelector: {}`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy).not.toBeNull();
+    expect(result.policy!.policySource).toBe('kubernetes');
+    expect(result.policy!.apiVersion).toBe('networking.k8s.io/v1');
+    expect(result.policy!.types).toEqual(['Ingress']);
+    expect(result.policy!.selector).toBe('all()');
+  });
+
+  it('applies Kubernetes policyTypes defaulting (ingress + egress when egress section exists)', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-default-types
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  egress: []`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.types).toEqual(['Ingress', 'Egress']);
+  });
+
+  it('normalizes ipBlock.except to nets/notNets', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-ipblock
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/24
+            except:
+              - 10.0.0.10/32`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.egressRules).toHaveLength(1);
+    expect(result.policy!.egressRules[0].destination?.nets).toEqual(['10.0.0.0/24']);
+    expect(result.policy!.egressRules[0].destination?.notNets).toEqual(['10.0.0.10/32']);
+  });
+
+  it('supports namespaceSelector + podSelector in the same peer', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-peer-and
+spec:
+  podSelector: {}
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              team: web
+          podSelector:
+            matchLabels:
+              app: frontend`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    const rule = result.policy!.ingressRules[0];
+    expect(rule.source?.namespaceSelector).toContain("team == 'web'");
+    expect(rule.source?.selector).toContain("app == 'frontend'");
+  });
+
+  it('normalizes endPort as a range', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-endport
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 32000
+          endPort: 32768`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.egressRules[0].protocol).toBe('TCP');
+    expect(result.policy!.egressRules[0].destination?.ports).toEqual(['32000:32768']);
+  });
+
+  it('supports named ports', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-named-port
+spec:
+  podSelector: {}
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: http`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.ingressRules[0].destination?.ports).toEqual(['http']);
+  });
+});

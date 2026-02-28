@@ -8,6 +8,7 @@ export interface SamplePolicy {
 
 export const SAMPLE_CATEGORIES = [
   'Baseline / Zero Trust',
+  'Kubernetes NetworkPolicy',
   'Pod & Namespace Scoping',
   'Database & Stateful Workloads',
   'Gateway API & Ingress Controller',
@@ -35,6 +36,76 @@ spec:
   types:
     - Ingress
     - Egress`,
+  },
+  {
+    id: 'k8s-default-deny-ingress',
+    name: 'k8s-default-deny-ingress',
+    description: 'Kubernetes NetworkPolicy that isolates ingress for all pods in a namespace.',
+    category: 'Kubernetes NetworkPolicy',
+    yaml: `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress`,
+  },
+  {
+    id: 'k8s-allow-cross-namespace-web',
+    name: 'k8s-allow-cross-namespace-web',
+    description: 'Allows ingress on 8080 from frontend pods in namespaces labeled team=web.',
+    category: 'Kubernetes NetworkPolicy',
+    yaml: `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend
+  namespace: backend
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              team: web
+          podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - protocol: TCP
+          port: 8080`,
+  },
+  {
+    id: 'k8s-egress-ipblock-range',
+    name: 'k8s-egress-ipblock-range',
+    description: 'Allows TCP egress to a CIDR on a target port range using endPort.',
+    category: 'Kubernetes NetworkPolicy',
+    yaml: `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-port-range
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: db-client
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/24
+            except:
+              - 10.0.0.10/32
+      ports:
+        - protocol: TCP
+          port: 32000
+          endPort: 32768`,
   },
 
   // ── Pod & Namespace Scoping ────────────────────────────────────────

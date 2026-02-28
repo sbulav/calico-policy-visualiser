@@ -1,4 +1,4 @@
-// Calico Network Policy types based on projectcalico.org/v3 API
+// Policy types for Calico and Kubernetes NetworkPolicy resources.
 
 export type PolicyKind = 'NetworkPolicy' | 'GlobalNetworkPolicy';
 export type RuleAction = 'Allow' | 'Deny' | 'Log' | 'Pass';
@@ -59,7 +59,46 @@ interface PolicyMetadata {
   annotations?: Record<string, string>;
 }
 
+interface KubernetesLabelSelectorRequirement {
+  key: string;
+  operator: 'In' | 'NotIn' | 'Exists' | 'DoesNotExist';
+  values?: string[];
+}
+
+export interface KubernetesLabelSelector {
+  matchLabels?: Record<string, string>;
+  matchExpressions?: KubernetesLabelSelectorRequirement[];
+}
+
+interface KubernetesIPBlock {
+  cidr: string;
+  except?: string[];
+}
+
+interface KubernetesNetworkPolicyPeer {
+  podSelector?: KubernetesLabelSelector;
+  namespaceSelector?: KubernetesLabelSelector;
+  ipBlock?: KubernetesIPBlock;
+}
+
+interface KubernetesNetworkPolicyPort {
+  protocol?: 'TCP' | 'UDP' | 'SCTP';
+  port?: number | string;
+  endPort?: number;
+}
+
+interface KubernetesNetworkPolicyIngressRule {
+  from?: KubernetesNetworkPolicyPeer[];
+  ports?: KubernetesNetworkPolicyPort[];
+}
+
+interface KubernetesNetworkPolicyEgressRule {
+  to?: KubernetesNetworkPolicyPeer[];
+  ports?: KubernetesNetworkPolicyPort[];
+}
+
 interface PolicySpec {
+  // Calico fields
   order?: number;
   tier?: string;
   selector?: string;
@@ -72,6 +111,12 @@ interface PolicySpec {
   preDNAT?: boolean;
   applyOnForward?: boolean;
   performanceHints?: string[];
+
+  // Kubernetes fields
+  podSelector?: KubernetesLabelSelector;
+  policyTypes?: PolicyType[];
+  k8sIngress?: KubernetesNetworkPolicyIngressRule[];
+  k8sEgress?: KubernetesNetworkPolicyEgressRule[];
 }
 
 export interface CalicoPolicy {
@@ -81,9 +126,13 @@ export interface CalicoPolicy {
   spec: PolicySpec;
 }
 
+export type PolicySource = 'calico' | 'kubernetes';
+
 // Resolved policy info for visualization
 export interface ResolvedPolicy {
   raw: CalicoPolicy;
+  policySource: PolicySource;
+  apiVersion: string;
   name: string;
   namespace?: string;
   kind: PolicyKind;

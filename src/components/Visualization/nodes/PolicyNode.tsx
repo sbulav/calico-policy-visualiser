@@ -6,6 +6,7 @@ type PolicyNodeComponentProps = NodeProps & { data: PolicyNodeData };
 
 function PolicyNodeComponent({ data }: PolicyNodeComponentProps) {
   const isGlobal = data.kind === 'GlobalNetworkPolicy';
+  const isCalico = data.policySource === 'calico';
 
   return (
     <div className="relative min-w-[280px] max-w-[360px]">
@@ -28,8 +29,7 @@ function PolicyNodeComponent({ data }: PolicyNodeComponentProps) {
               {isGlobal ? 'Global' : 'Namespaced'}
             </span>
             <span className="text-[10px] text-slate-400 font-mono">
-              tier: {data.tier}
-              {data.order !== undefined ? ` | order: ${data.order}` : ''}
+              {isCalico ? `tier: ${data.tier}${data.order !== undefined ? ` | order: ${data.order}` : ''}` : 'k8s networking.k8s.io/v1'}
             </span>
           </div>
         </div>

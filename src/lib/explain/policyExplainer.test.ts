@@ -31,6 +31,8 @@ function makePolicy(overrides: Partial<ResolvedPolicy> & { name: string }): Reso
 
   return {
     raw,
+    policySource: overrides.policySource ?? 'calico',
+    apiVersion: overrides.apiVersion ?? 'projectcalico.org/v3',
     name: overrides.name,
     namespace: overrides.namespace,
     kind: overrides.kind ?? 'NetworkPolicy',
@@ -141,6 +143,20 @@ describe('explainPolicy — Policy Overview', () => {
     });
     const sections = explainPolicy(policy);
     expect(sections[0].items).toContain("Namespace selector: env == 'prod'");
+  });
+
+  it('shows Kubernetes source details for networking.k8s.io/v1 policies', () => {
+    const policy = makePolicy({
+      name: 'k8s-policy',
+      policySource: 'kubernetes',
+      apiVersion: 'networking.k8s.io/v1',
+      tier: 'kubernetes',
+    });
+
+    const sections = explainPolicy(policy);
+    expect(sections[0].items).toContain('Source: Kubernetes networking.k8s.io/v1');
+    const hasTier = sections[0].items.some(i => i.startsWith('Tier:'));
+    expect(hasTier).toBe(false);
   });
 });
 

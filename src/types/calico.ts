@@ -135,7 +135,7 @@ export interface KubernetesNetworkPolicy {
 
 export type PolicySource = 'calico' | 'kubernetes';
 
-interface ResolvedPolicyBase {
+export interface ResolvedPolicyBase {
   apiVersion: string;
   name: string;
   namespace?: string;

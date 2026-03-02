@@ -547,9 +547,12 @@ spec:
     const result = parseYaml(yaml);
     expect(result.error).toBeNull();
     const p = result.policy!;
-    expect(p.raw.spec.doNotTrack).toBe(true);
-    expect(p.raw.spec.preDNAT).toBe(true);
-    expect(p.raw.spec.applyOnForward).toBe(true);
+    expect(p.policySource).toBe('calico');
+    if (p.policySource === 'calico') {
+      expect(p.raw.spec.doNotTrack).toBe(true);
+      expect(p.raw.spec.preDNAT).toBe(true);
+      expect(p.raw.spec.applyOnForward).toBe(true);
+    }
   });
 });
 
@@ -1297,5 +1300,129 @@ spec:
     const result = parseYaml(yaml);
     expect(result.error).toBeNull();
     expect(result.policy!.ingressRules[0].destination?.ports).toEqual(['http']);
+  });
+
+  it('multi-peer + multi-port ingress: one rule per peer, all ports on each rule (not a cross-product)', () => {
+    // K8s semantics: peers are ORed, ports are ORed independently.
+    // 2 peers × 2 ports must produce 2 rules (one per peer), each carrying both ports —
+    // NOT 4 rules (which would be the wrong cross-product).
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-multi-peer-multi-port
+spec:
+  podSelector: {}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+        - namespaceSelector:
+            matchLabels:
+              team: ops
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    // Must produce exactly 2 rules — one per peer, NOT 4 (2×2 cross-product).
+    expect(result.policy!.ingressRules).toHaveLength(2);
+
+    for (const rule of result.policy!.ingressRules) {
+      // Each rule must carry both ports.
+      expect(rule.destination?.ports).toEqual([80, 443]);
+      expect(rule.protocol).toBe('TCP');
+    }
+
+    // First rule: pod peer.
+    expect(result.policy!.ingressRules[0].source?.selector).toContain("app == 'frontend'");
+    // Second rule: namespace peer.
+    expect(result.policy!.ingressRules[1].source?.namespaceSelector).toContain("team == 'ops'");
+  });
+
+  it('multi-peer + multi-port egress: one rule per peer, all ports on each rule (not a cross-product)', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-multi-peer-egress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+        - podSelector:
+            matchLabels:
+              app: db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 5433`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    // Must produce exactly 2 rules — one per peer.
+    expect(result.policy!.egressRules).toHaveLength(2);
+
+    for (const rule of result.policy!.egressRules) {
+      expect(rule.destination?.ports).toEqual([5432, 5433]);
+      expect(rule.protocol).toBe('TCP');
+    }
+
+    // First rule: ipBlock peer.
+    expect(result.policy!.egressRules[0].destination?.nets).toEqual(['10.0.0.0/8']);
+    // Second rule: pod selector peer.
+    expect(result.policy!.egressRules[1].destination?.selector).toContain("app == 'db'");
+  });
+
+  it('allow-from-same-namespace: empty podSelector peer matches all pods in same namespace', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-same-ns
+  namespace: production
+spec:
+  podSelector: {}
+  ingress:
+    - from:
+        - podSelector: {}`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    expect(result.policy!.ingressRules).toHaveLength(1);
+    // Empty podSelector = all pods in the same namespace.
+    expect(result.policy!.ingressRules[0].source?.selector).toBe('all()');
+  });
+
+  it('ruleLineRanges is non-null for a K8s policy with ingress and egress rules', () => {
+    const yaml = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8s-line-ranges
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: web
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8`;
+
+    const result = parseYaml(yaml);
+    expect(result.error).toBeNull();
+    // ruleLineRanges must be populated (not null) so editor highlighting is attempted.
+    expect(result.ruleLineRanges).not.toBeNull();
   });
 });

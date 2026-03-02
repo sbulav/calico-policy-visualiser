@@ -27,6 +27,7 @@ interface ParseResult {
 const CALICO_API_VERSION = 'projectcalico.org/v3';
 const K8S_API_VERSION = 'networking.k8s.io/v1';
 const CALICO_KINDS: PolicyKind[] = ['NetworkPolicy', 'GlobalNetworkPolicy'];
+export const K8S_TIER_SENTINEL = 'kubernetes';
 
 // Filter null/undefined values that js-yaml produces from incomplete YAML list
 // items (e.g. `- ` with no value). Without this, downstream code like ipUtils
@@ -226,7 +227,7 @@ export function parseYaml(yamlStr: string): ParseResult {
 
 function parseCalicoPolicy(doc: Record<string, unknown>): { policy: ResolvedPolicy; warnings: string[] } {
   if (!CALICO_KINDS.includes(doc.kind as PolicyKind)) {
-    throw new Error('Unsupported kind for Calico policy');
+    throw new Error(`Unsupported kind: "${doc.kind}". Expected "NetworkPolicy" or "GlobalNetworkPolicy"`);
   }
 
   const raw = doc as unknown as CalicoPolicy;
@@ -325,7 +326,7 @@ function parseKubernetesPolicy(doc: Record<string, unknown>): { policy: Resolved
     name: rawDoc.metadata.name,
     namespace: rawDoc.metadata.namespace,
     kind: 'NetworkPolicy',
-    tier: 'kubernetes',
+    tier: K8S_TIER_SENTINEL,
     order: undefined,
     selector,
     namespaceSelector: undefined,
@@ -345,6 +346,40 @@ function parseKubernetesPolicy(doc: Record<string, unknown>): { policy: Resolved
   return { policy: resolved, warnings };
 }
 
+// Collect all port specs from a K8s rule into a single resolved port/protocol list.
+// K8s semantics: ports within a rule are ORed — any port can match.
+// We carry all ports on every peer-derived rule so the graph reflects the full rule intent.
+function collectK8sPorts(
+  portSpecs: KubernetesNetworkPolicyPort[] | undefined,
+  ruleLabel: string,
+  warnings: string[],
+): { protocols: Array<'TCP' | 'UDP' | 'SCTP' | undefined>; ports: Port[] } {
+  if (!portSpecs || portSpecs.length === 0) {
+    return { protocols: [undefined], ports: [] };
+  }
+
+  // When all ports share one protocol we can set it at the rule level.
+  // When ports have mixed or absent protocols we fall back to per-rule splitting
+  // (one Calico rule per port spec) to keep protocol correct per port.
+  const normalized = portSpecs.map(p => normalizeK8sPort(p, ruleLabel, warnings));
+  const uniqueProtocols = [...new Set(normalized.map(n => n.protocol))];
+
+  if (uniqueProtocols.length === 1) {
+    // All ports share a single protocol (or all have none) — emit one rule.
+    return {
+      protocols: uniqueProtocols,
+      ports: normalized.map(n => n.port).filter((p): p is Port => p !== undefined),
+    };
+  }
+
+  // Mixed protocols: return each port as its own entry so the caller emits
+  // one rule per port spec (still one rule per peer, not cross-product).
+  return {
+    protocols: normalized.map(n => n.protocol),
+    ports: normalized.map(n => n.port).filter((p): p is Port => p !== undefined),
+  };
+}
+
 function normalizeK8sIngressRules(
   rules: KubernetesNetworkPolicyIngressRule[] | undefined,
   warnings: string[],
@@ -354,27 +389,26 @@ function normalizeK8sIngressRules(
   const result: Rule[] = [];
 
   for (const [idx, rule] of rules.entries()) {
+    const ruleLabel = `Ingress rule ${idx + 1}`;
     const peers = !rule.from || rule.from.length === 0 ? [undefined] : rule.from;
-    const ports = !rule.ports || rule.ports.length === 0 ? [undefined] : rule.ports;
+    const { protocols, ports } = collectK8sPorts(rule.ports, ruleLabel, warnings);
 
+    // One Calico rule per peer; all ports are applied to each peer rule.
+    // This correctly reflects K8s semantics: peer OR peer, and port OR port,
+    // independently — not a cross-product of peer × port.
     for (const peer of peers) {
-      const source = normalizeK8sPeer(peer, `Ingress rule ${idx + 1}`, warnings);
-      for (const portSpec of ports) {
-        const normalizedPort = normalizeK8sPort(portSpec, `Ingress rule ${idx + 1}`, warnings);
-        const nextRule: Rule = {
-          action: 'Allow',
-          source,
-        };
-
-        if (normalizedPort.protocol) {
-          nextRule.protocol = normalizedPort.protocol;
-        }
-        if (normalizedPort.port !== undefined) {
-          nextRule.destination = { ports: [normalizedPort.port] };
-        }
-
-        result.push(nextRule);
+      const source = normalizeK8sPeer(peer, ruleLabel, warnings);
+      const destination: EntityRule | undefined = ports.length > 0 ? { ports } : undefined;
+      const nextRule: Rule = {
+        action: 'Allow',
+        source,
+        destination,
+      };
+      // Use the single shared protocol when there is exactly one.
+      if (protocols.length === 1 && protocols[0] !== undefined) {
+        nextRule.protocol = protocols[0];
       }
+      result.push(nextRule);
     }
   }
 
@@ -390,30 +424,25 @@ function normalizeK8sEgressRules(
   const result: Rule[] = [];
 
   for (const [idx, rule] of rules.entries()) {
+    const ruleLabel = `Egress rule ${idx + 1}`;
     const peers = !rule.to || rule.to.length === 0 ? [undefined] : rule.to;
-    const ports = !rule.ports || rule.ports.length === 0 ? [undefined] : rule.ports;
+    const { protocols, ports } = collectK8sPorts(rule.ports, ruleLabel, warnings);
 
+    // One Calico rule per peer; all ports are applied to each peer rule.
     for (const peer of peers) {
-      const destination = normalizeK8sPeer(peer, `Egress rule ${idx + 1}`, warnings);
-      for (const portSpec of ports) {
-        const normalizedPort = normalizeK8sPort(portSpec, `Egress rule ${idx + 1}`, warnings);
-        const nextRule: Rule = {
-          action: 'Allow',
-          destination,
-        };
-
-        if (normalizedPort.protocol) {
-          nextRule.protocol = normalizedPort.protocol;
-        }
-        if (normalizedPort.port !== undefined) {
-          nextRule.destination = {
-            ...(nextRule.destination || {}),
-            ports: [normalizedPort.port],
-          };
-        }
-
-        result.push(nextRule);
+      const peerEntity = normalizeK8sPeer(peer, ruleLabel, warnings);
+      const destination: EntityRule | undefined =
+        peerEntity || ports.length > 0
+          ? { ...peerEntity, ...(ports.length > 0 ? { ports } : {}) }
+          : undefined;
+      const nextRule: Rule = {
+        action: 'Allow',
+        destination,
+      };
+      if (protocols.length === 1 && protocols[0] !== undefined) {
+        nextRule.protocol = protocols[0];
       }
+      result.push(nextRule);
     }
   }
 

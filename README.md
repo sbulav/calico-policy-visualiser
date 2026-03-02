@@ -1,6 +1,6 @@
-# Calico Network Policy Visualiser
+# Calico & Kubernetes Network Policy Visualiser
 
-A browser-based tool for Calico `NetworkPolicy` and `GlobalNetworkPolicy` visualization. Import YAML, see an interactive graph, highlighted source, and plain-English explanation. Everything runs client-side.
+A browser-based tool for visualizing Calico and Kubernetes network policies. Import YAML, see an interactive graph, highlighted source, and plain-English explanation. Everything runs client-side.
 
 <img height="2150" alt="Calico Policy Visualiser screenshot" width="100%" src="https://github.com/user-attachments/assets/bce9bd3a-03f3-4ce3-98fd-d4fc0308508e" />
 
@@ -10,7 +10,7 @@ A browser-based tool for Calico `NetworkPolicy` and `GlobalNetworkPolicy` visual
 
 Cilium has the free [Network Policy Editor](https://editor.networkpolicy.io/) for Kubernetes network policies. Calico does not. Its visualization tools are in the paid Cloud and Enterprise versions.
 
-This project is a free alternative. Load your Calico YAML. Get a graph of rules by traffic scope. See a text breakdown of what the policy allows or blocks.
+This project is a free alternative. Load your Calico or Kubernetes NetworkPolicy YAML. Get a graph of rules by traffic scope. See a text breakdown of what the policy allows or blocks.
 
 ## Features
 
@@ -20,8 +20,10 @@ This project is a free alternative. Load your Calico YAML. Get a graph of rules 
 - **Rule groups**: Outside Cluster (CIDRs), In Namespace (pod selectors), In Cluster (cross-namespace). Each has rule cards with ports, selectors, services, and negation fields.
 - **Inferred access**: Graph shows if Kubernetes DNS, any pod in namespace, or everything in cluster is allowed, denied, or uncertain. Defaults start as deny but catch-all rules override.
 - **Explanation**: Bottom panel with policy details, flag descriptions (doNotTrack, preDNAT, applyOnForward), effective defaults, and per-rule text. Recognizes 20 well-known ports like Redis (6379), K8s API (6443), PostgreSQL (5432).
-- **Supported fields**: Full Calico v3 spec. Selectors, namespaceSelector, serviceAccountSelector, tier, order, types (inferred if missing), rules with action (Allow/Deny/Log/Pass), protocol, icmp, source/destination (nets, ports, services, serviceAccounts), negation (notNets, notPorts, notSelector), http match, ipVersion, policy flags.
-- **Samples**: Built-in NetworkPolicy (allow TCP 6379 from blue pods) and GlobalNetworkPolicy (k8s masters ingress).
+- **Supported resources**:
+  - **Calico** `projectcalico.org/v3`: `NetworkPolicy`, `GlobalNetworkPolicy` (full existing support)
+  - **Kubernetes** `networking.k8s.io/v1`: `NetworkPolicy` (pod/namespace selectors, `ipBlock` with `except`, named ports, `endPort`, policyTypes defaults)
+- **Samples**: Built-in examples for both Calico and Kubernetes NetworkPolicy.
 - **Privacy**: No backend. No data sent anywhere.
 
 ## Quick start
@@ -47,7 +49,12 @@ Load a sample or import YAML. Hover rules in the graph. Read the explanation.
 
 ## Usage
 
-Click **Import YAML** in the toolbar and pick a `.yaml` or `.yml` file with a Calico NetworkPolicy or GlobalNetworkPolicy. Or use one of the sample buttons to load a built-in example. You can also type or paste YAML directly into the editor — the visualization updates as you type.
+Click **Import YAML** in the toolbar and pick a `.yaml` or `.yml` file with:
+
+- Calico `NetworkPolicy` / `GlobalNetworkPolicy` (`projectcalico.org/v3`), or
+- Kubernetes `NetworkPolicy` (`networking.k8s.io/v1`)
+
+Or use one of the sample buttons to load a built-in example. You can also type or paste YAML directly into the editor — the visualization updates as you type.
 
 In the graph:
 - Drag nodes to rearrange.
@@ -150,17 +157,18 @@ Strict TypeScript with `verbatimModuleSyntax`, `noUnusedLocals`, `noUnusedParame
 
 ## Testing
 
-252 tests across seven files.
+328 tests across nine files.
 
 | File | Tests | Covers |
 |------|-------|--------|
-| `yamlParser.test.ts` | 30 | Parsing, validation, all Calico fields |
+| `yamlParser.test.ts` | 63 | Parsing, validation, Calico + Kubernetes fields |
 | `yamlLineMapper.test.ts` | 9 | Line ranges for editor highlighting |
-| `policyToGraph.test.ts` | 84 | Rule groups, edges, inferred statuses, defaults |
-| `policyExplainer.test.ts` | 46 | Text sections, port names, rule descriptions |
+| `policyToGraph.test.ts` | 85 | Rule groups, edges, inferred statuses, defaults |
+| `policyExplainer.test.ts` | 47 | Text sections, port names, rule descriptions |
 | `selectorParser.test.ts` | 37 | Calico selector expression parsing and evaluation |
-| `ruleMatcher.test.ts` | 28 | Rule matching against traffic specifications |
+| `ruleMatcher.test.ts` | 37 | Rule matching against traffic specifications |
 | `accessTester.test.ts` | 18 | End-to-end access verdict evaluation |
+| `k8sSelector.test.ts` | 10 | Kubernetes label selector normalization |
 
 ```sh
 npm run test                                          # all tests

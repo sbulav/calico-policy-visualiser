@@ -180,10 +180,11 @@ export function explainPolicy(policy: ResolvedPolicy): ExplanationSection[] {
     type: 'info',
   });
 
-  // Policy-level flags (preDNAT, applyOnForward, doNotTrack)
-  const spec = policy.raw.spec;
-  const hasFlags = policy.policySource === 'calico' && (spec.preDNAT || spec.applyOnForward || spec.doNotTrack);
-  if (hasFlags) {
+  // Policy-level flags (preDNAT, applyOnForward, doNotTrack) — Calico only
+  if (policy.policySource === 'calico') {
+    const spec = policy.raw.spec;
+    const hasFlags = spec.preDNAT || spec.applyOnForward || spec.doNotTrack;
+    if (hasFlags) {
     const flagItems: string[] = [];
     if (spec.preDNAT) {
       flagItems.push(
@@ -220,7 +221,8 @@ export function explainPolicy(policy: ResolvedPolicy): ExplanationSection[] {
       items: flagItems,
       type: 'warning',
     });
-  }
+    } // end if (hasFlags)
+  } // end if (policy.policySource === 'calico')
 
   // Defaults — show implicit deny behavior for managed directions.
   const defaultItems: string[] = [];

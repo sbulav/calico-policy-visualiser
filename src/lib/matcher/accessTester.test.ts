@@ -25,7 +25,7 @@ function makePolicy(overrides: Partial<ResolvedPolicy> = {}): ResolvedPolicy {
     ingressDefault: 'deny',
     egressDefault: 'deny',
     ...overrides,
-  };
+  } as ResolvedPolicy;
 }
 
 describe('testAccess', () => {

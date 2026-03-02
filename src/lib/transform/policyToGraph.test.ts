@@ -44,7 +44,7 @@ function makePolicy(overrides: Partial<ResolvedPolicy> & { name: string }): Reso
     egressRules: overrides.egressRules ?? [],
     ingressDefault: overrides.ingressDefault ?? 'deny',
     egressDefault: overrides.egressDefault ?? 'allow',
-  };
+  } as ResolvedPolicy;
 }
 
 function makeRule(overrides: Partial<Rule>): Rule {

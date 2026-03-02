@@ -12,6 +12,8 @@ function makePolicy(overrides: Partial<ResolvedPolicy> = {}): ResolvedPolicy {
       metadata: { name: 'test-policy', namespace: 'default' },
       spec: {},
     },
+    policySource: 'calico',
+    apiVersion: 'projectcalico.org/v3',
     name: 'test-policy',
     namespace: 'default',
     kind: 'NetworkPolicy',

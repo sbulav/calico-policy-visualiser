@@ -123,7 +123,7 @@ export function testAccess(
   const effectiveDefault = baseDefault === 'allow' ? 'allowed' : 'denied';
   const defaultLabel = baseDefault === 'allow'
     ? 'This direction is not explicitly managed — traffic is allowed by default'
-    : 'No rule matched — traffic is denied by implicit Calico default';
+    : 'No rule matched — traffic is denied by implicit policy default';
 
   return {
     verdict: effectiveDefault as 'allowed' | 'denied',

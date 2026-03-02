@@ -29,6 +29,8 @@ function makePolicy(overrides: Partial<ResolvedPolicy> & { name: string }): Reso
 
   return {
     raw,
+    policySource: overrides.policySource ?? 'calico',
+    apiVersion: overrides.apiVersion ?? 'projectcalico.org/v3',
     name: overrides.name,
     namespace: overrides.namespace,
     kind: overrides.kind ?? 'NetworkPolicy',
@@ -599,6 +601,23 @@ describe('policyToGraph — node structure', () => {
     expect(data.selector).toBe("app == 'web'");
     expect(data.tier).toBe('security');
     expect(data.order).toBe(100);
+  });
+
+  it('keeps Kubernetes source metadata on the policy node', () => {
+    const policy = makePolicy({
+      name: 'k8s-policy',
+      policySource: 'kubernetes',
+      apiVersion: 'networking.k8s.io/v1',
+      tier: 'kubernetes',
+    });
+
+    const { nodes } = policyToGraph(policy);
+    const center = nodes.find(n => n.id === 'policy-center');
+    const data = center!.data as unknown as PolicyNodeData;
+    expect(data.policySource).toBe('kubernetes');
+    expect(data.preDNAT).toBeUndefined();
+    expect(data.applyOnForward).toBeUndefined();
+    expect(data.doNotTrack).toBeUndefined();
   });
 
   it('creates rule nodes for all 3 categories per direction', () => {

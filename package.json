@@ -1,7 +1,7 @@
 {
   "name": "calico-policy-visualiser",
   "private": true,
-  "version": "0.8.5",
+  "version": "0.9.0",
   "description": "Calico Network Policy Visualisator",
   "author": "Sergei Bulavintsev",
   "license": "MIT",

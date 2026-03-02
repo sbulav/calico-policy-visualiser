@@ -1,4 +1,4 @@
-import type { RuleAction } from './calico';
+import type { RuleAction, PolicySource } from './calico';
 
 // Categories for grouping rules in the visualization
 export type RuleCategory = 'outsideCluster' | 'inNamespace' | 'inCluster';
@@ -52,6 +52,7 @@ export interface CategoryGroup {
 }
 
 export interface PolicyNodeData {
+  policySource: PolicySource;
   name: string;
   namespace?: string;
   kind: string;

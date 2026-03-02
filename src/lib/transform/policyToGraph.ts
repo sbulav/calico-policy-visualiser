@@ -585,6 +585,7 @@ export function policyToGraph(policy: ResolvedPolicy, ruleLineRanges?: RuleLineR
   const effectiveEgress = computeEffectiveDefault(policy.egressRules, 'egress', policy.egressDefault);
 
   const policyNodeData: PolicyNodeData = {
+    policySource: policy.policySource,
     name: policy.name,
     namespace: policy.namespace,
     kind: policy.kind,
@@ -598,9 +599,9 @@ export function policyToGraph(policy: ResolvedPolicy, ruleLineRanges?: RuleLineR
     effectiveIngressDefault: effectiveIngress,
     effectiveEgressDefault: effectiveEgress,
     // Policy-level flags from spec
-    applyOnForward: policy.raw.spec.applyOnForward || undefined,
-    preDNAT: policy.raw.spec.preDNAT || undefined,
-    doNotTrack: policy.raw.spec.doNotTrack || undefined,
+    applyOnForward: policy.policySource === 'calico' ? policy.raw.spec.applyOnForward || undefined : undefined,
+    preDNAT: policy.policySource === 'calico' ? policy.raw.spec.preDNAT || undefined : undefined,
+    doNotTrack: policy.policySource === 'calico' ? policy.raw.spec.doNotTrack || undefined : undefined,
   };
 
   nodes.push({

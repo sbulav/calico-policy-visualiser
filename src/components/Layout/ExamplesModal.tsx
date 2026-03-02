@@ -11,6 +11,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   'ServiceAccount-Aware Policies (Calico-Specific)': '\u{1F464}',
   'GlobalNetworkPolicy & Cluster Protection': '\u{1F512}',
   'Production Reference Architectures': '\u{1F3D7}\uFE0F',
+  'Kubernetes NetworkPolicy': '\u2388\uFE0F',
 };
 
 type ExamplesModalProps = {

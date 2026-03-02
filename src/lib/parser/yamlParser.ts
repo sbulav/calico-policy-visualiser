@@ -1,7 +1,21 @@
 import yaml from 'js-yaml';
-import type { CalicoPolicy, PolicyKind, ResolvedPolicy, Rule, EntityRule, Port } from '../../types/calico';
+import type {
+  CalicoPolicy,
+  KubernetesNetworkPolicy,
+  KubernetesNetworkPolicySpec,
+  KubernetesNetworkPolicyPeer,
+  KubernetesNetworkPolicyPort,
+  KubernetesNetworkPolicyIngressRule,
+  KubernetesNetworkPolicyEgressRule,
+  PolicyKind,
+  ResolvedPolicy,
+  Rule,
+  EntityRule,
+  Port,
+} from '../../types/calico';
 import { mapRuleLineRanges, type RuleLineRanges } from './yamlLineMapper';
 import { isValidPort, isValidCidr } from '../ipUtils';
+import { labelSelectorToExpression } from './k8sSelector';
 
 interface ParseResult {
   policy: ResolvedPolicy | null;
@@ -10,7 +24,10 @@ interface ParseResult {
   ruleLineRanges: RuleLineRanges | null;
 }
 
-const VALID_KINDS: PolicyKind[] = ['NetworkPolicy', 'GlobalNetworkPolicy'];
+const CALICO_API_VERSION = 'projectcalico.org/v3';
+const K8S_API_VERSION = 'networking.k8s.io/v1';
+const CALICO_KINDS: PolicyKind[] = ['NetworkPolicy', 'GlobalNetworkPolicy'];
+export const K8S_TIER_SENTINEL = 'kubernetes';
 
 // Filter null/undefined values that js-yaml produces from incomplete YAML list
 // items (e.g. `- ` with no value). Without this, downstream code like ipUtils
@@ -175,39 +192,53 @@ export function parseYaml(yamlStr: string): ParseResult {
 
   const doc = parsed as Record<string, unknown>;
 
-  // Validate apiVersion
-  if (doc.apiVersion !== 'projectcalico.org/v3') {
+  let parsedResult: { policy: ResolvedPolicy; warnings: string[] };
+
+  try {
+    if (doc.apiVersion === CALICO_API_VERSION) {
+      parsedResult = parseCalicoPolicy(doc);
+    } else if (doc.apiVersion === K8S_API_VERSION) {
+      parsedResult = parseKubernetesPolicy(doc);
+    } else {
+      return {
+        policy: null,
+        error: `Unsupported apiVersion: "${doc.apiVersion}". Expected "${CALICO_API_VERSION}" or "${K8S_API_VERSION}"`,
+        warnings: [],
+        ruleLineRanges: null,
+      };
+    }
+  } catch (error) {
     return {
       policy: null,
-      error: `Unsupported apiVersion: "${doc.apiVersion}". Expected "projectcalico.org/v3"`,
+      error: error instanceof Error ? error.message : 'Failed to parse policy',
       warnings: [],
       ruleLineRanges: null,
     };
   }
 
-  // Validate kind
-  if (!VALID_KINDS.includes(doc.kind as PolicyKind)) {
-    return {
-      policy: null,
-      error: `Unsupported kind: "${doc.kind}". Expected "NetworkPolicy" or "GlobalNetworkPolicy"`,
-      warnings: [],
-      ruleLineRanges: null,
-    };
+  const ruleLineRanges = mapRuleLineRanges(yamlStr);
+  return {
+    policy: parsedResult.policy,
+    error: null,
+    warnings: parsedResult.warnings,
+    ruleLineRanges,
+  };
+}
+
+function parseCalicoPolicy(doc: Record<string, unknown>): { policy: ResolvedPolicy; warnings: string[] } {
+  if (!CALICO_KINDS.includes(doc.kind as PolicyKind)) {
+    throw new Error(`Unsupported kind: "${doc.kind}". Expected "NetworkPolicy" or "GlobalNetworkPolicy"`);
   }
 
   const raw = doc as unknown as CalicoPolicy;
 
-  // Validate metadata
   if (!raw.metadata?.name) {
-    return { policy: null, error: 'Missing metadata.name', warnings: [], ruleLineRanges: null };
+    throw new Error('Missing metadata.name');
   }
-
-  // Validate spec
   if (!raw.spec) {
-    return { policy: null, error: 'Missing spec', warnings: [], ruleLineRanges: null };
+    throw new Error('Missing spec');
   }
 
-  // Resolve types
   const hasIngress = Array.isArray(raw.spec.ingress) && raw.spec.ingress.length > 0;
   const hasEgress = Array.isArray(raw.spec.egress) && raw.spec.egress.length > 0;
 
@@ -222,14 +253,13 @@ export function parseYaml(yamlStr: string): ParseResult {
     }
   }
 
-  // Determine defaults:
-  // If a direction is listed in types, the implicit default is deny (Calico semantics).
-  // If a direction is not listed in types, traffic is allowed through (not restricted).
   const ingressDefault = types.includes('Ingress') ? 'deny' : 'allow';
   const egressDefault = types.includes('Egress') ? 'deny' : 'allow';
 
   const resolved: ResolvedPolicy = {
     raw,
+    policySource: 'calico',
+    apiVersion: raw.apiVersion,
     name: raw.metadata.name,
     namespace: raw.metadata.namespace,
     kind: raw.kind,
@@ -241,11 +271,10 @@ export function parseYaml(yamlStr: string): ParseResult {
     types,
     ingressRules: sanitizeRules(raw.spec.ingress || []),
     egressRules: sanitizeRules(raw.spec.egress || []),
-    ingressDefault: ingressDefault as 'deny' | 'allow' | 'none',
-    egressDefault: egressDefault as 'deny' | 'allow' | 'none',
+    ingressDefault,
+    egressDefault,
   };
 
-  // Validate ports and CIDRs — collect non-blocking warnings
   const warnings = [
     ...collectWarnings(resolved.ingressRules, 'Ingress'),
     ...collectWarnings(resolved.egressRules, 'Egress'),
@@ -253,7 +282,6 @@ export function parseYaml(yamlStr: string): ParseResult {
     ...collectSelectorWarnings(raw.spec.egress || [], 'Egress'),
   ];
 
-  // Warn about malformed policy-level selectors
   if (!isValidSelectorType(raw.spec.selector)) {
     warnings.push('Policy selector should be a string, got object. Use selector: "app == \'foo\'" syntax.');
   }
@@ -264,8 +292,215 @@ export function parseYaml(yamlStr: string): ParseResult {
     warnings.push('Policy serviceAccountSelector should be a string, got object.');
   }
 
-  // Compute YAML source line ranges for each rule (for editor highlighting)
-  const ruleLineRanges = mapRuleLineRanges(yamlStr);
+  return { policy: resolved, warnings };
+}
 
-  return { policy: resolved, error: null, warnings, ruleLineRanges };
+function parseKubernetesPolicy(doc: Record<string, unknown>): { policy: ResolvedPolicy; warnings: string[] } {
+  if (doc.kind !== 'NetworkPolicy') {
+    throw new Error(`Unsupported kind: "${doc.kind}". Kubernetes networking.k8s.io/v1 supports "NetworkPolicy" only`);
+  }
+
+  const rawDoc = doc as unknown as KubernetesNetworkPolicy;
+  if (!rawDoc.metadata?.name) {
+    throw new Error('Missing metadata.name');
+  }
+
+  const spec = (doc.spec ?? {}) as KubernetesNetworkPolicySpec;
+  const warnings: string[] = [];
+
+  const hasEgressSection = Array.isArray(spec.egress);
+  let types = spec.policyTypes;
+  if (!types || types.length === 0) {
+    types = hasEgressSection ? ['Ingress', 'Egress'] : ['Ingress'];
+  }
+
+  const normalizedIngress = normalizeK8sIngressRules(spec.ingress, warnings);
+  const normalizedEgress = normalizeK8sEgressRules(spec.egress, warnings);
+
+  const selector = labelSelectorToExpression(spec.podSelector) || 'all()';
+
+  const resolved: ResolvedPolicy = {
+    raw: rawDoc,
+    policySource: 'kubernetes',
+    apiVersion: K8S_API_VERSION,
+    name: rawDoc.metadata.name,
+    namespace: rawDoc.metadata.namespace,
+    kind: 'NetworkPolicy',
+    tier: K8S_TIER_SENTINEL,
+    order: undefined,
+    selector,
+    namespaceSelector: undefined,
+    serviceAccountSelector: undefined,
+    types,
+    ingressRules: sanitizeRules(normalizedIngress),
+    egressRules: sanitizeRules(normalizedEgress),
+    ingressDefault: types.includes('Ingress') ? 'deny' : 'allow',
+    egressDefault: types.includes('Egress') ? 'deny' : 'allow',
+  };
+
+  warnings.push(
+    ...collectWarnings(resolved.ingressRules, 'Ingress'),
+    ...collectWarnings(resolved.egressRules, 'Egress'),
+  );
+
+  return { policy: resolved, warnings };
+}
+
+// Collect all port specs from a K8s rule into a single resolved port/protocol list.
+// K8s semantics: ports within a rule are ORed — any port can match.
+// We carry all ports on every peer-derived rule so the graph reflects the full rule intent.
+function collectK8sPorts(
+  portSpecs: KubernetesNetworkPolicyPort[] | undefined,
+  ruleLabel: string,
+  warnings: string[],
+): { protocols: Array<'TCP' | 'UDP' | 'SCTP' | undefined>; ports: Port[] } {
+  if (!portSpecs || portSpecs.length === 0) {
+    return { protocols: [undefined], ports: [] };
+  }
+
+  // When all ports share one protocol we can set it at the rule level.
+  // When ports have mixed or absent protocols we fall back to per-rule splitting
+  // (one Calico rule per port spec) to keep protocol correct per port.
+  const normalized = portSpecs.map(p => normalizeK8sPort(p, ruleLabel, warnings));
+  const uniqueProtocols = [...new Set(normalized.map(n => n.protocol))];
+
+  if (uniqueProtocols.length === 1) {
+    // All ports share a single protocol (or all have none) — emit one rule.
+    return {
+      protocols: uniqueProtocols,
+      ports: normalized.map(n => n.port).filter((p): p is Port => p !== undefined),
+    };
+  }
+
+  // Mixed protocols: return each port as its own entry so the caller emits
+  // one rule per port spec (still one rule per peer, not cross-product).
+  return {
+    protocols: normalized.map(n => n.protocol),
+    ports: normalized.map(n => n.port).filter((p): p is Port => p !== undefined),
+  };
+}
+
+function normalizeK8sIngressRules(
+  rules: KubernetesNetworkPolicyIngressRule[] | undefined,
+  warnings: string[],
+): Rule[] {
+  if (!Array.isArray(rules)) return [];
+
+  const result: Rule[] = [];
+
+  for (const [idx, rule] of rules.entries()) {
+    const ruleLabel = `Ingress rule ${idx + 1}`;
+    const peers = !rule.from || rule.from.length === 0 ? [undefined] : rule.from;
+    const { protocols, ports } = collectK8sPorts(rule.ports, ruleLabel, warnings);
+
+    // One Calico rule per peer; all ports are applied to each peer rule.
+    // This correctly reflects K8s semantics: peer OR peer, and port OR port,
+    // independently — not a cross-product of peer × port.
+    for (const peer of peers) {
+      const source = normalizeK8sPeer(peer, ruleLabel, warnings);
+      const destination: EntityRule | undefined = ports.length > 0 ? { ports } : undefined;
+      const nextRule: Rule = {
+        action: 'Allow',
+        source,
+        destination,
+      };
+      // Use the single shared protocol when there is exactly one.
+      if (protocols.length === 1 && protocols[0] !== undefined) {
+        nextRule.protocol = protocols[0];
+      }
+      result.push(nextRule);
+    }
+  }
+
+  return result;
+}
+
+function normalizeK8sEgressRules(
+  rules: KubernetesNetworkPolicyEgressRule[] | undefined,
+  warnings: string[],
+): Rule[] {
+  if (!Array.isArray(rules)) return [];
+
+  const result: Rule[] = [];
+
+  for (const [idx, rule] of rules.entries()) {
+    const ruleLabel = `Egress rule ${idx + 1}`;
+    const peers = !rule.to || rule.to.length === 0 ? [undefined] : rule.to;
+    const { protocols, ports } = collectK8sPorts(rule.ports, ruleLabel, warnings);
+
+    // One Calico rule per peer; all ports are applied to each peer rule.
+    for (const peer of peers) {
+      const peerEntity = normalizeK8sPeer(peer, ruleLabel, warnings);
+      const destination: EntityRule | undefined =
+        peerEntity || ports.length > 0
+          ? { ...peerEntity, ...(ports.length > 0 ? { ports } : {}) }
+          : undefined;
+      const nextRule: Rule = {
+        action: 'Allow',
+        destination,
+      };
+      if (protocols.length === 1 && protocols[0] !== undefined) {
+        nextRule.protocol = protocols[0];
+      }
+      result.push(nextRule);
+    }
+  }
+
+  return result;
+}
+
+function normalizeK8sPeer(peer: KubernetesNetworkPolicyPeer | undefined, ruleLabel: string, warnings: string[]): EntityRule | undefined {
+  if (!peer) return undefined;
+
+  const hasIpBlock = !!peer.ipBlock;
+  const hasSelector = !!peer.podSelector || !!peer.namespaceSelector;
+  if (hasIpBlock && hasSelector) {
+    warnings.push(`${ruleLabel}: ipBlock cannot be combined with podSelector/namespaceSelector in one peer`);
+  }
+
+  const selector = labelSelectorToExpression(peer.podSelector);
+  const namespaceSelector = labelSelectorToExpression(peer.namespaceSelector);
+
+  return {
+    selector,
+    namespaceSelector,
+    nets: peer.ipBlock?.cidr ? [peer.ipBlock.cidr] : undefined,
+    notNets: peer.ipBlock?.except,
+  };
+}
+
+function normalizeK8sPort(
+  portSpec: KubernetesNetworkPolicyPort | undefined,
+  ruleLabel: string,
+  warnings: string[],
+): { protocol?: 'TCP' | 'UDP' | 'SCTP'; port?: Port } {
+  if (!portSpec) {
+    return {};
+  }
+
+  const protocol = portSpec.protocol ?? (portSpec.port !== undefined ? 'TCP' : undefined);
+
+  if (portSpec.endPort !== undefined) {
+    if (typeof portSpec.port !== 'number') {
+      warnings.push(`${ruleLabel}: endPort requires numeric port; ignoring endPort`);
+      return {
+        protocol,
+        port: portSpec.port,
+      };
+    }
+
+    if (portSpec.endPort < portSpec.port) {
+      warnings.push(`${ruleLabel}: endPort ${portSpec.endPort} must be >= port ${portSpec.port}`);
+    }
+
+    return {
+      protocol,
+      port: `${portSpec.port}:${portSpec.endPort}`,
+    };
+  }
+
+  return {
+    protocol,
+    port: portSpec.port,
+  };
 }

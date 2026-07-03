@@ -10,6 +10,7 @@ import { usePolicyState, usePolicyDispatch } from '../../context/usePolicyContex
 import { parseYaml } from '../../lib/parser/yamlParser';
 import { decodePolicyParam, MAX_POLICY_YAML_CHARS } from '../../lib/urlPolicy';
 import { useDebouncedCallback } from '../../hooks/useDebouncedCallback';
+import { useResizeHandle } from '../../hooks/useResizeHandle';
 import type { SamplePolicy } from '../../samples';
 import { SAMPLE_POLICIES } from '../../samples';
 
@@ -43,6 +44,11 @@ function parseParams(raw: string, plusAsSpace: boolean) {
   return params;
 }
 
+// The explanation panel may grow up to two thirds of the viewport height.
+function getExplanationMaxHeight() {
+  return Math.round(window.innerHeight * 2 / 3);
+}
+
 function getPolicyParams() {
   if (typeof window === 'undefined') {
     return { url: null, policy: null };
@@ -63,15 +69,25 @@ export default function AppLayout() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const urlLoadControllerRef = useRef<AbortController | null>(null);
   const [explanationCollapsed, setExplanationCollapsed] = useState(false);
-  const [explanationHeight, setExplanationHeight] = useState(208);
-  const [leftPanelWidth, setLeftPanelWidth] = useState(350);
-  const [isResizing, setIsResizing] = useState(false);
-  const [isResizingExplanation, setIsResizingExplanation] = useState(false);
   const [examplesOpen, setExamplesOpen] = useState(false);
   const [urlModalOpen, setUrlModalOpen] = useState(false);
   const [testerOpen, setTesterOpen] = useState(false);
-  const [rightPanelWidth, setRightPanelWidth] = useState(320);
-  const [isResizingRight, setIsResizingRight] = useState(false);
+
+  const {
+    size: leftPanelWidth,
+    isResizing,
+    handleResizeStart,
+  } = useResizeHandle(350, { axis: 'x', min: 250, max: 600 });
+  const {
+    size: explanationHeight,
+    isResizing: isResizingExplanation,
+    handleResizeStart: handleExplanationResizeStart,
+  } = useResizeHandle(208, { axis: 'y', min: 80, max: getExplanationMaxHeight, inverted: true });
+  const {
+    size: rightPanelWidth,
+    isResizing: isResizingRight,
+    handleResizeStart: handleRightResizeStart,
+  } = useResizeHandle(320, { axis: 'x', min: 260, max: 500, inverted: true });
 
   // Parse YAML and dispatch the result (policy or error) to state.
   const parseAndDispatch = useCallback((yamlContent: string) => {
@@ -231,76 +247,6 @@ export default function AppLayout() {
     // Reset input so same file can be loaded again
     e.target.value = '';
   }, [dispatch, loadYaml]);
-
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-
-    const startX = e.clientX;
-    const startWidth = leftPanelWidth;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const diff = moveEvent.clientX - startX;
-      const newWidth = Math.max(250, Math.min(600, startWidth + diff));
-      setLeftPanelWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [leftPanelWidth]);
-
-  const handleExplanationResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizingExplanation(true);
-
-    const startY = e.clientY;
-    const startHeight = explanationHeight;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const diff = startY - moveEvent.clientY;
-      const maxHeight = Math.round(window.innerHeight * 2 / 3);
-      const newHeight = Math.max(80, Math.min(maxHeight, startHeight + diff));
-      setExplanationHeight(newHeight);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizingExplanation(false);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [explanationHeight]);
-
-  const handleRightResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizingRight(true);
-
-    const startX = e.clientX;
-    const startWidth = rightPanelWidth;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const diff = startX - moveEvent.clientX;
-      const newWidth = Math.max(260, Math.min(500, startWidth + diff));
-      setRightPanelWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizingRight(false);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [rightPanelWidth]);
 
   return (
     <div className="h-screen flex flex-col bg-slate-900">

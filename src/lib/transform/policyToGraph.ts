@@ -1,8 +1,8 @@
 import { MarkerType, type Node, type Edge } from '@xyflow/react';
-import type { ResolvedPolicy, Rule, EntityRule, Port } from '../../types/calico';
+import type { ResolvedPolicy, Rule, EntityRule } from '../../types/calico';
 import type { RuleCategory, RuleDetail, SourceRange, InferredState, InferredStatus, CategoryGroup, PolicyNodeData, RuleNodeData, PolicyEdgeData } from '../../types/graph';
 import type { RuleLineRanges } from '../parser/yamlLineMapper';
-import { formatPort } from '../formatPort';
+import { getRuleEntities, formatPorts, summarizeNets, type RuleDirection } from '../ruleDescription';
 import { cidrContainsIp, coversAllPrivateRanges } from '../ipUtils';
 
 // Determine the category of a rule based on its source/destination
@@ -51,16 +51,8 @@ function classifyRule(entity: EntityRule | undefined, policyNamespace?: string):
   return 'outsideCluster';
 }
 
-function formatPorts(ports?: Port[]): string[] {
-  if (!ports || ports.length === 0) return [];
-  return ports.map(formatPort);
-}
-
-function describeRule(rule: Rule, direction: 'ingress' | 'egress', sourceRange?: SourceRange): RuleDetail {
-  const entity = direction === 'ingress' ? rule.source : rule.destination;
-  // The "opposite" entity carries match criteria for the other side of the rule
-  // (destination for ingress, source for egress)
-  const opposite = direction === 'ingress' ? rule.destination : rule.source;
+function describeRule(rule: Rule, direction: RuleDirection, sourceRange?: SourceRange): RuleDetail {
+  const { entity, opposite } = getRuleEntities(rule, direction);
   const parts: string[] = [];
 
   parts.push(`${rule.action}`);
@@ -74,11 +66,7 @@ function describeRule(rule: Rule, direction: 'ingress' | 'egress', sourceRange?:
   }
 
   if (entity?.nets && entity.nets.length > 0) {
-    if (entity.nets.length <= 3) {
-      parts.push(`to ${entity.nets.join(', ')}`);
-    } else {
-      parts.push(`to ${entity.nets.length} CIDRs`);
-    }
+    parts.push(`to ${summarizeNets(entity.nets, 'CIDRs')}`);
   }
 
   if (entity?.selector) {
@@ -157,8 +145,8 @@ const DNS_SA_NAMES = ['coredns', 'nodelocaldns', 'node-local-dns'];
 const DNS_SVC_NAMES = ['kube-dns'];
 
 // Check if a rule explicitly targets DNS
-function ruleMatchesDns(rule: Rule, direction: 'ingress' | 'egress'): boolean {
-  const entity = direction === 'ingress' ? rule.source : rule.destination;
+function ruleMatchesDns(rule: Rule, direction: RuleDirection): boolean {
+  const { entity } = getRuleEntities(rule, direction);
   if (!entity) return false;
 
   // Service named kube-dns
@@ -205,15 +193,14 @@ function entityHasConstraints(entity: EntityRule | undefined): boolean {
 // A rule that restricts by protocol or has any opposite-side constraint (e.g.
 // destination nets/ports/selector on an ingress rule) does not broadly cover
 // the cluster — it only matches a specific traffic class.
-function ruleCoversBroadCluster(rule: Rule, direction: 'ingress' | 'egress'): boolean {
+function ruleCoversBroadCluster(rule: Rule, direction: RuleDirection): boolean {
   // Protocol restriction narrows the traffic class
   if (rule.protocol) return false;
 
-  // Any opposite-side constraint narrows which traffic matches
-  const opposite = direction === 'ingress' ? rule.destination : rule.source;
-  if (entityHasConstraints(opposite)) return false;
+  const { entity, opposite } = getRuleEntities(rule, direction);
 
-  const entity = direction === 'ingress' ? rule.source : rule.destination;
+  // Any opposite-side constraint narrows which traffic matches
+  if (entityHasConstraints(opposite)) return false;
 
   // No entity = matches everything
   if (!entity) return true;
@@ -229,16 +216,16 @@ function ruleCoversBroadCluster(rule: Rule, direction: 'ingress' | 'egress'): bo
 //  - The same-side entity (source for ingress, destination for egress) is absent or 0.0.0.0/0
 //  - No protocol restriction
 //  - No opposite-side constraints (nets, ports, selectors, etc.)
-function ruleIsUnrestricted(rule: Rule, direction: 'ingress' | 'egress'): boolean {
+function ruleIsUnrestricted(rule: Rule, direction: RuleDirection): boolean {
   // Protocol restriction narrows the traffic class — not a catch-all
   if (rule.protocol) return false;
 
+  const { entity, opposite } = getRuleEntities(rule, direction);
+
   // Any opposite-side constraint narrows which traffic matches (e.g. dst nets/ports
   // on ingress, src nets/ports on egress). A rule with such constraints is not a catch-all.
-  const opposite = direction === 'ingress' ? rule.destination : rule.source;
   if (entityHasConstraints(opposite)) return false;
 
-  const entity = direction === 'ingress' ? rule.source : rule.destination;
   if (!entity) return true;
   if (entity.nets && entity.nets.length === 1 && entity.nets[0] === '0.0.0.0/0' && !entity.ports) return true;
   return false;
@@ -261,7 +248,7 @@ function ruleIsUnrestricted(rule: Rule, direction: 'ingress' | 'egress'): boolea
  */
 export function computeEffectiveDefault(
   rules: Rule[],
-  direction: 'ingress' | 'egress',
+  direction: RuleDirection,
   baseDefault: 'allow' | 'deny' | 'none',
 ): 'allow' | 'deny' {
   let seenRestrictedDeny = false;
@@ -296,7 +283,7 @@ export function computeEffectiveDefault(
  */
 export function hasDenyBeforeCatchAll(
   rules: Rule[],
-  direction: 'ingress' | 'egress',
+  direction: RuleDirection,
 ): boolean {
   let seenRestrictedDeny = false;
 
@@ -318,7 +305,7 @@ export function hasDenyBeforeCatchAll(
  * Infer DNS and cluster-wide access status by walking rules in order.
  * Returns inferred statuses for the "In Cluster" category block.
  */
-export function inferClusterStatuses(rules: Rule[], direction: 'ingress' | 'egress'): InferredStatus[] {
+export function inferClusterStatuses(rules: Rule[], direction: RuleDirection): InferredStatus[] {
   const statuses: InferredStatus[] = [];
   const loggedSuffix = ' (traffic is also logged)';
 
@@ -452,15 +439,15 @@ export function inferClusterStatuses(rules: Rule[], direction: 'ingress' | 'egre
  */
 function ruleMatchesAnyNamespacePod(
   rule: Rule,
-  direction: 'ingress' | 'egress',
+  direction: RuleDirection,
   policyNamespace: string,
 ): 'direct' | 'implicit' | false {
-  const entity = direction === 'ingress' ? rule.source : rule.destination;
+  const { entity } = getRuleEntities(rule, direction);
 
   // No entity at all → matches everything, including every pod in namespace
   if (!entity) return 'direct';
 
-    const category = classifyRule(entity, policyNamespace);
+  const category = classifyRule(entity, policyNamespace);
 
   // If the rule is classified as inNamespace, check whether it narrows the target
   if (category === 'inNamespace') {
@@ -503,7 +490,7 @@ function ruleMatchesAnyNamespacePod(
  */
 export function inferNamespaceStatuses(
   rules: Rule[],
-  direction: 'ingress' | 'egress',
+  direction: RuleDirection,
   policyNamespace?: string,
 ): InferredStatus[] {
   // Not meaningful for cluster-scoped policies
@@ -576,6 +563,44 @@ function getCategoryLabel(category: RuleCategory): string {
   }
 }
 
+interface DirectionGroup {
+  rules: RuleDetail[];
+  hasAllow: boolean;
+  hasDeny: boolean;
+  hasLog: boolean;
+}
+
+type DirectionGroups = Map<RuleCategory, DirectionGroup>;
+
+// Group a direction's rules by category, tracking which actions appear in each group.
+function groupRulesByCategory(
+  rules: Rule[],
+  direction: RuleDirection,
+  ranges: RuleLineRanges['ingress'],
+  policyNamespace?: string,
+): DirectionGroups {
+  const groups: DirectionGroups = new Map();
+
+  for (let ruleIdx = 0; ruleIdx < rules.length; ruleIdx++) {
+    const rule = rules[ruleIdx];
+    const { entity } = getRuleEntities(rule, direction);
+    const category = classifyRule(entity, policyNamespace);
+    const range = ruleIdx < ranges.length ? ranges[ruleIdx] : undefined;
+    const detail = describeRule(rule, direction, range);
+
+    if (!groups.has(category)) {
+      groups.set(category, { rules: [], hasAllow: false, hasDeny: false, hasLog: false });
+    }
+    const group = groups.get(category)!;
+    group.rules.push(detail);
+    if (rule.action === 'Allow') group.hasAllow = true;
+    if (rule.action === 'Deny') group.hasDeny = true;
+    if (rule.action === 'Log') group.hasLog = true;
+  }
+
+  return groups;
+}
+
 export function policyToGraph(policy: ResolvedPolicy, ruleLineRanges?: RuleLineRanges | null): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -612,53 +637,17 @@ export function policyToGraph(policy: ResolvedPolicy, ruleLineRanges?: RuleLineR
     draggable: true,
   });
 
-  // Group ingress rules by category
-  const ingressRanges = ruleLineRanges?.ingress ?? [];
-  const ingressGroups = new Map<RuleCategory, { rules: RuleDetail[]; hasAllow: boolean; hasDeny: boolean; hasLog: boolean }>();
-  for (let ruleIdx = 0; ruleIdx < policy.ingressRules.length; ruleIdx++) {
-    const rule = policy.ingressRules[ruleIdx];
-    const entity = rule.source;
-    const category = classifyRule(entity, policy.namespace);
-    const range = ruleIdx < ingressRanges.length ? ingressRanges[ruleIdx] : undefined;
-    const detail = describeRule(rule, 'ingress', range);
-
-    if (!ingressGroups.has(category)) {
-      ingressGroups.set(category, { rules: [], hasAllow: false, hasDeny: false, hasLog: false });
-    }
-    const group = ingressGroups.get(category)!;
-    group.rules.push(detail);
-    if (rule.action === 'Allow') group.hasAllow = true;
-    if (rule.action === 'Deny') group.hasDeny = true;
-    if (rule.action === 'Log') group.hasLog = true;
-  }
-
-  // Group egress rules by category
-  const egressRanges = ruleLineRanges?.egress ?? [];
-  const egressGroups = new Map<RuleCategory, { rules: RuleDetail[]; hasAllow: boolean; hasDeny: boolean; hasLog: boolean }>();
-  for (let ruleIdx = 0; ruleIdx < policy.egressRules.length; ruleIdx++) {
-    const rule = policy.egressRules[ruleIdx];
-    const entity = rule.destination;
-    const category = classifyRule(entity, policy.namespace);
-    const range = ruleIdx < egressRanges.length ? egressRanges[ruleIdx] : undefined;
-    const detail = describeRule(rule, 'egress', range);
-
-    if (!egressGroups.has(category)) {
-      egressGroups.set(category, { rules: [], hasAllow: false, hasDeny: false, hasLog: false });
-    }
-    const group = egressGroups.get(category)!;
-    group.rules.push(detail);
-    if (rule.action === 'Allow') group.hasAllow = true;
-    if (rule.action === 'Deny') group.hasDeny = true;
-    if (rule.action === 'Log') group.hasLog = true;
-  }
+  // Group rules by category for each direction
+  const ingressGroups = groupRulesByCategory(policy.ingressRules, 'ingress', ruleLineRanges?.ingress ?? [], policy.namespace);
+  const egressGroups = groupRulesByCategory(policy.egressRules, 'egress', ruleLineRanges?.egress ?? [], policy.namespace);
 
   // Helper: create nodes and edges for a direction, always showing all 3 categories
   const categoryOrder: RuleCategory[] = ['outsideCluster', 'inNamespace', 'inCluster'];
   const SPACING = 220;
 
   function createDirectionNodes(
-    direction: 'ingress' | 'egress',
-    groups: Map<RuleCategory, { rules: RuleDetail[]; hasAllow: boolean; hasDeny: boolean; hasLog: boolean }>,
+    direction: RuleDirection,
+    groups: DirectionGroups,
     xPos: number,
     allRules: Rule[],
     policyNamespace?: string,
@@ -711,91 +700,57 @@ export function policyToGraph(policy: ResolvedPolicy, ruleLineRanges?: RuleLineR
         draggable: true,
       });
 
+      // Determine edge appearance for this category:
+      //  - Unmanaged direction: green solid edge (traffic is allowed through)
+      //  - Managed but empty category: dimmed dashed edge
+      //  - Active category: color reflects the actual verdict. Log rules are
+      //    transparent (don't allow/deny):
+      //      Allow only / Allow+Log → green    Deny only / Deny+Log → red
+      //      Allow+Deny / All three → amber    Log only → amber (diagnostic, no verdict)
+      let edgeColor: string;
+      let edgeStyle: Edge['style'];
+      let edgeAnimated: boolean;
+      let edgeData: PolicyEdgeData;
+
       if (!managed) {
-        // Unmanaged direction: green solid edges (traffic is allowed through)
-        const edgeData: PolicyEdgeData = {
-          action: 'Allow',
-          rules: [],
-          category,
-        };
-
-        const edgeBase = {
-          id: `edge-${nodeId}`,
-          type: 'policyEdge',
-          data: edgeData,
-          style: { stroke: '#22c55e', strokeWidth: 2 },
-          animated: true,
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#22c55e', width: 16, height: 16 },
-        };
-
-        if (direction === 'ingress') {
-          edges.push({ ...edgeBase, source: nodeId, target: 'policy-center', sourceHandle: 'right', targetHandle: 'left' });
-        } else {
-          edges.push({ ...edgeBase, source: 'policy-center', target: nodeId, sourceHandle: 'right', targetHandle: 'left' });
-        }
+        edgeColor = '#22c55e';
+        edgeStyle = { stroke: edgeColor, strokeWidth: 2 };
+        edgeAnimated = true;
+        edgeData = { action: 'Allow', rules: [], category };
       } else if (isEmpty) {
-        // Managed but empty category: dimmed dashed edge
-        const edgeData: PolicyEdgeData = {
-          action: 'Allow',
-          rules: [],
-          category,
-        };
-
-        const edgeBase = {
-          id: `edge-${nodeId}`,
-          type: 'policyEdge',
-          data: edgeData,
-          style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '6 4', opacity: 0.4 },
-          animated: false,
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#475569', width: 16, height: 16 },
-        };
-
-        if (direction === 'ingress') {
-          edges.push({ ...edgeBase, source: nodeId, target: 'policy-center', sourceHandle: 'right', targetHandle: 'left' });
-        } else {
-          edges.push({ ...edgeBase, source: 'policy-center', target: nodeId, sourceHandle: 'right', targetHandle: 'left' });
-        }
+        edgeColor = '#475569';
+        edgeStyle = { stroke: edgeColor, strokeWidth: 1, strokeDasharray: '6 4', opacity: 0.4 };
+        edgeAnimated = false;
+        edgeData = { action: 'Allow', rules: [], category };
       } else {
-        // Active category: colored edge
-        // Log rules are transparent (don't allow/deny). Edge color reflects the actual verdict:
-        //   Allow only / Allow+Log → green    Deny only / Deny+Log → red
-        //   Allow+Deny / All three → amber    Log only → amber (diagnostic, no verdict)
-        const hasAllow = group!.hasAllow;
-        const hasDeny = group!.hasDeny;
-        const hasLog = group!.hasLog;
+        const { hasAllow, hasDeny, hasLog, rules } = group!;
         const logOnly = hasLog && !hasAllow && !hasDeny;
 
-        const edgeColor = logOnly
+        edgeColor = logOnly
           ? '#f59e0b' // amber for log-only (no traffic decision)
           : hasDeny && hasAllow
             ? '#f59e0b' // amber for mixed allow+deny
             : hasDeny
               ? '#ef4444' // red for deny
               : '#22c55e'; // green for allow
-
-        const edgeAction = logOnly ? 'Log' : hasDeny ? 'Deny' : 'Allow';
-
-        const edgeData: PolicyEdgeData = {
-          action: edgeAction,
-          rules: group!.rules,
-          category,
-        };
-
-        const edgeBase = {
-          id: `edge-${nodeId}`,
-          type: 'policyEdge',
-          data: edgeData,
-          style: { stroke: edgeColor, strokeWidth: 2 },
-          animated: true,
-          markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor, width: 16, height: 16 },
-        };
-
-        if (direction === 'ingress') {
-          edges.push({ ...edgeBase, source: nodeId, target: 'policy-center', sourceHandle: 'right', targetHandle: 'left' });
-        } else {
-          edges.push({ ...edgeBase, source: 'policy-center', target: nodeId, sourceHandle: 'right', targetHandle: 'left' });
-        }
+        edgeStyle = { stroke: edgeColor, strokeWidth: 2 };
+        edgeAnimated = true;
+        edgeData = { action: logOnly ? 'Log' : hasDeny ? 'Deny' : 'Allow', rules, category };
       }
+
+      const edgeBase = {
+        id: `edge-${nodeId}`,
+        type: 'policyEdge',
+        data: edgeData,
+        style: edgeStyle,
+        animated: edgeAnimated,
+        markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor, width: 16, height: 16 },
+      };
+
+      // Ingress edges flow into the policy node; egress edges flow out of it.
+      edges.push(direction === 'ingress'
+        ? { ...edgeBase, source: nodeId, target: 'policy-center', sourceHandle: 'right', targetHandle: 'left' }
+        : { ...edgeBase, source: 'policy-center', target: nodeId, sourceHandle: 'right', targetHandle: 'left' });
 
       y += SPACING;
     }

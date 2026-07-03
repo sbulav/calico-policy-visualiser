@@ -1,45 +1,15 @@
-import type { ResolvedPolicy, Rule, Port } from '../../types/calico';
+import type { ResolvedPolicy, Rule } from '../../types/calico';
 import { inferClusterStatuses, inferNamespaceStatuses, computeEffectiveDefault, hasDenyBeforeCatchAll } from '../transform/policyToGraph';
+import { getRuleEntities, summarizeNets, formatPortWithWellKnown, type RuleDirection } from '../ruleDescription';
 import { formatPort } from '../formatPort';
-
-function describeWellKnownPort(port: Port): string {
-  const p = typeof port === 'number' ? port : parseInt(port, 10);
-  if (isNaN(p)) return '';
-
-  const known: Record<number, string> = {
-    53: 'DNS',
-    80: 'HTTP',
-    443: 'HTTPS',
-    22: 'SSH',
-    25: 'SMTP',
-    110: 'POP3',
-    143: 'IMAP',
-    993: 'IMAPS',
-    995: 'POP3S',
-    3306: 'MySQL',
-    5432: 'PostgreSQL',
-    6379: 'Redis',
-    27017: 'MongoDB',
-    8080: 'HTTP-ALT',
-    8443: 'HTTPS-ALT',
-    9090: 'Prometheus',
-    9093: 'Alertmanager',
-    2379: 'etcd',
-    6443: 'K8s API',
-    10250: 'Kubelet',
-  };
-
-  return known[p] || '';
-}
 
 function describeProtocol(protocol?: string | number): string {
   if (!protocol) return 'any protocol';
   return String(protocol);
 }
 
-function describeRule(rule: Rule, direction: 'ingress' | 'egress'): string {
-  const entity = direction === 'ingress' ? rule.source : rule.destination;
-  const opposite = direction === 'ingress' ? rule.destination : rule.source;
+function describeRule(rule: Rule, direction: RuleDirection): string {
+  const { entity, opposite } = getRuleEntities(rule, direction);
   const parts: string[] = [];
 
   // Action
@@ -58,22 +28,14 @@ function describeRule(rule: Rule, direction: 'ingress' | 'egress'): string {
 
   // Ports
   if (entity?.ports && entity.ports.length > 0) {
-    const portDescs = entity.ports.map(p => {
-      const wellKnown = describeWellKnownPort(p);
-      const portStr = formatPort(p);
-      return wellKnown ? `${portStr} (${wellKnown})` : portStr;
-    });
+    const portDescs = entity.ports.map(formatPortWithWellKnown);
     parts.push(`on port${entity.ports.length > 1 ? 's' : ''} ${portDescs.join(', ')}`);
   }
 
   // Source/Destination
   if (entity?.nets && entity.nets.length > 0) {
     const dir = direction === 'ingress' ? 'from' : 'to';
-    if (entity.nets.length <= 3) {
-      parts.push(`${dir} ${entity.nets.join(', ')}`);
-    } else {
-      parts.push(`${dir} ${entity.nets.length} CIDR ranges`);
-    }
+    parts.push(`${dir} ${summarizeNets(entity.nets, 'CIDR ranges')}`);
   }
 
   if (entity?.selector) {
@@ -122,21 +84,13 @@ function describeRule(rule: Rule, direction: 'ingress' | 'egress'): string {
   if (opposite) {
     const oppDir = direction === 'ingress' ? 'destined for' : 'originating from';
     if (opposite.nets && opposite.nets.length > 0) {
-      if (opposite.nets.length <= 3) {
-        parts.push(`${oppDir} ${opposite.nets.join(', ')}`);
-      } else {
-        parts.push(`${oppDir} ${opposite.nets.length} CIDR ranges`);
-      }
+      parts.push(`${oppDir} ${summarizeNets(opposite.nets, 'CIDR ranges')}`);
     }
     if (opposite.selector) {
       parts.push(`${oppDir} pods matching: ${opposite.selector}`);
     }
     if (opposite.ports && opposite.ports.length > 0) {
-      const portDescs = opposite.ports.map(p => {
-        const wellKnown = describeWellKnownPort(p);
-        const portStr = formatPort(p);
-        return wellKnown ? `${portStr} (${wellKnown})` : portStr;
-      });
+      const portDescs = opposite.ports.map(formatPortWithWellKnown);
       const label = direction === 'ingress' ? 'dst' : 'src';
       parts.push(`(${label} port${opposite.ports.length > 1 ? 's' : ''} ${portDescs.join(', ')})`);
     }

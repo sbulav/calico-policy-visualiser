@@ -39,3 +39,6 @@ lerna-debug.log*
 
 # Nix
 result
+
+# Generated files (never commit — may contain private data)
+src/generated/

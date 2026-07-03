@@ -6,9 +6,9 @@ import PolicyExplanation from '../Explanation/PolicyExplanation';
 import ExamplesModal from './ExamplesModal';
 import UrlPolicyModal from './UrlPolicyModal';
 import AccessTesterPanel from '../AccessTester/AccessTesterPanel';
-import { usePolicyContext } from '../../context/usePolicyContext';
+import { usePolicyState, usePolicyDispatch } from '../../context/usePolicyContext';
 import { parseYaml } from '../../lib/parser/yamlParser';
-import { decodePolicyParam } from '../../lib/urlPolicy';
+import { decodePolicyParam, MAX_POLICY_YAML_CHARS } from '../../lib/urlPolicy';
 import { useDebouncedCallback } from '../../hooks/useDebouncedCallback';
 import type { SamplePolicy } from '../../samples';
 import { SAMPLE_POLICIES } from '../../samples';
@@ -58,7 +58,8 @@ function getPolicyParams() {
 }
 
 export default function AppLayout() {
-  const { state, dispatch } = usePolicyContext();
+  const state = usePolicyState();
+  const dispatch = usePolicyDispatch();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const urlLoadControllerRef = useRef<AbortController | null>(null);
   const [explanationCollapsed, setExplanationCollapsed] = useState(false);
@@ -97,6 +98,7 @@ export default function AppLayout() {
     urlLoadControllerRef.current?.abort();
     const controller = new AbortController();
     urlLoadControllerRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
 
     try {
       const response = await fetch(url, {
@@ -110,12 +112,23 @@ export default function AppLayout() {
         throw new Error(`Failed to fetch policy (${response.status} ${response.statusText})`);
       }
 
+      const contentLength = Number(response.headers.get('content-length'));
+      if (Number.isFinite(contentLength) && contentLength > MAX_POLICY_YAML_CHARS) {
+        throw new Error('Fetched policy is too large.');
+      }
+
       const yamlContent = await response.text();
+      if (yamlContent.length > MAX_POLICY_YAML_CHARS) {
+        throw new Error('Fetched policy is too large.');
+      }
+
       loadYaml(yamlContent);
     } catch (error) {
       if (controller.signal.aborted) return;
       const message = error instanceof Error ? error.message : 'Failed to load policy from URL.';
       dispatch({ type: 'SET_ERROR', payload: message });
+    } finally {
+      window.clearTimeout(timeoutId);
     }
   }, [dispatch, loadYaml]);
 
@@ -199,17 +212,25 @@ export default function AppLayout() {
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_POLICY_YAML_CHARS) {
+      dispatch({ type: 'SET_ERROR', payload: 'Imported file is too large.' });
+      e.target.value = '';
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const content = ev.target?.result as string;
-      if (content) {
+      const content = ev.target?.result;
+      if (typeof content === 'string' && content) {
         loadYaml(content);
       }
+    };
+    reader.onerror = () => {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to read the imported file.' });
     };
     reader.readAsText(file);
     // Reset input so same file can be loaded again
     e.target.value = '';
-  }, [loadYaml]);
+  }, [dispatch, loadYaml]);
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

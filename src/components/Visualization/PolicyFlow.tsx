@@ -16,7 +16,7 @@ import PolicyNodeComponent from './nodes/PolicyNode';
 import RuleNodeComponent from './nodes/RuleNode';
 import PolicyEdgeComponent from './edges/PolicyEdge';
 import { policyToGraph } from '../../lib/transform/policyToGraph';
-import { usePolicyContext } from '../../context/usePolicyContext';
+import { usePolicyState, usePolicyDispatch } from '../../context/usePolicyContext';
 
 const nodeTypes = {
   policyNode: PolicyNodeComponent,
@@ -28,7 +28,8 @@ const edgeTypes = {
 };
 
 export default function PolicyFlow() {
-  const { state, dispatch } = usePolicyContext();
+  const { policy, ruleLineRanges } = usePolicyState();
+  const dispatch = usePolicyDispatch();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const { fitView } = useReactFlow();
@@ -38,9 +39,11 @@ export default function PolicyFlow() {
   const prevNodeCountRef = useRef(0);
 
   useEffect(() => {
-    if (state.policy) {
+    let fitViewTimeout: number | undefined;
+
+    if (policy) {
       try {
-        const graph = policyToGraph(state.policy, state.ruleLineRanges);
+        const graph = policyToGraph(policy, ruleLineRanges);
         setNodes(graph.nodes);
         setEdges(graph.edges);
 
@@ -48,7 +51,7 @@ export default function PolicyFlow() {
         // jarring re-centering on every keystroke during live editing.
         if (graph.nodes.length !== prevNodeCountRef.current) {
           prevNodeCountRef.current = graph.nodes.length;
-          setTimeout(() => fitView({ padding: 0.3, duration: 300 }), 50);
+          fitViewTimeout = window.setTimeout(() => fitView({ padding: 0.3, duration: 300 }), 50);
         }
       } catch (err) {
         console.error('policyToGraph failed:', err);
@@ -59,7 +62,11 @@ export default function PolicyFlow() {
       setEdges([]);
       prevNodeCountRef.current = 0;
     }
-  }, [state.policy, state.ruleLineRanges, setNodes, setEdges, fitView, dispatch]);
+
+    return () => {
+      window.clearTimeout(fitViewTimeout);
+    };
+  }, [policy, ruleLineRanges, setNodes, setEdges, fitView, dispatch]);
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     dispatch({ type: 'SELECT_NODE', payload: node.id });
@@ -74,7 +81,7 @@ export default function PolicyFlow() {
     animated: true,
   }), []);
 
-  if (!state.policy) {
+  if (!policy) {
     return (
       <div className="flex items-center justify-center h-full text-slate-500">
         <div className="text-center space-y-3">

@@ -13,11 +13,12 @@ export default function UrlPolicyModal({ open, onClose, yamlContent, onLoadUrl }
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const dialogRef = useRef<HTMLDialogElement>(null);
 
-  useEffect(() => {
-    if (open) {
-      setCopyStatus('idle');
-    }
-  }, [open]);
+  // Reset transient copy feedback when the modal is dismissed so it
+  // reopens in a clean state (the component stays mounted while closed).
+  const handleClose = useCallback(() => {
+    setCopyStatus('idle');
+    onClose();
+  }, [onClose]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -40,14 +41,14 @@ export default function UrlPolicyModal({ open, onClose, yamlContent, onLoadUrl }
       e.clientY >= rect.top &&
       e.clientY <= rect.bottom;
     if (!clickedInside) {
-      onClose();
+      handleClose();
     }
-  }, [onClose]);
+  }, [handleClose]);
 
   const handleCancel = useCallback((e: React.SyntheticEvent<HTMLDialogElement>) => {
     e.preventDefault();
-    onClose();
-  }, [onClose]);
+    handleClose();
+  }, [handleClose]);
 
   const shareLink = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -111,7 +112,7 @@ export default function UrlPolicyModal({ open, onClose, yamlContent, onLoadUrl }
           <p className="text-[11px] text-slate-400">Fetch YAML from a URL or copy a deep link.</p>
         </div>
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="text-slate-400 hover:text-slate-100 transition-colors cursor-pointer p-1 rounded-lg hover:bg-slate-700/50"
           aria-label="Close"
         >

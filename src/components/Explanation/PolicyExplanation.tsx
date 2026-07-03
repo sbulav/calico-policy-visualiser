@@ -1,4 +1,6 @@
-import { usePolicyContext } from '../../context/usePolicyContext';
+import { useMemo } from 'react';
+
+import { usePolicyState } from '../../context/usePolicyContext';
 import { explainPolicy, type ExplanationSection } from '../../lib/explain/policyExplainer';
 
 function SectionIcon({ type }: { type: ExplanationSection['type'] }) {
@@ -40,25 +42,37 @@ function getSectionBorder(type: ExplanationSection['type']): string {
 }
 
 export default function PolicyExplanation() {
-  const { state } = usePolicyContext();
+  const { policy } = usePolicyState();
 
-  if (!state.policy) {
+  // Memoized so unrelated state changes (hover highlights, keystrokes)
+  // don't re-run the explanation walk.
+  const result = useMemo(() => {
+    if (!policy) {
+      return null;
+    }
+    try {
+      return { sections: explainPolicy(policy), error: null };
+    } catch (err) {
+      console.error('explainPolicy failed:', err);
+      return { sections: null, error: err instanceof Error ? err.message : 'Unknown error' };
+    }
+  }, [policy]);
+
+  if (!result) {
     return null;
   }
 
-  let sections: ExplanationSection[];
-  try {
-    sections = explainPolicy(state.policy);
-  } catch (err) {
-    console.error('explainPolicy failed:', err);
+  if (result.error !== null || !result.sections) {
     return (
       <div className="h-full flex items-center justify-center p-4 bg-slate-900/50">
         <p className="text-xs text-red-400">
-          Failed to generate explanation: {err instanceof Error ? err.message : 'Unknown error'}
+          Failed to generate explanation: {result.error}
         </p>
       </div>
     );
   }
+
+  const sections: ExplanationSection[] = result.sections;
 
   return (
     <div className="h-full overflow-y-auto p-4 bg-slate-900/50">

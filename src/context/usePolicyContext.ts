@@ -1,10 +1,18 @@
 import { useContext } from 'react';
-import { PolicyContext } from './policyContextDef';
+import { PolicyStateContext, PolicyDispatchContext } from './policyContextDef';
 
-export function usePolicyContext() {
-  const context = useContext(PolicyContext);
-  if (!context) {
-    throw new Error('usePolicyContext must be used within a PolicyProvider');
+export function usePolicyState() {
+  const state = useContext(PolicyStateContext);
+  if (!state) {
+    throw new Error('usePolicyState must be used within a PolicyProvider');
   }
-  return context;
+  return state;
+}
+
+export function usePolicyDispatch() {
+  const dispatch = useContext(PolicyDispatchContext);
+  if (!dispatch) {
+    throw new Error('usePolicyDispatch must be used within a PolicyProvider');
+  }
+  return dispatch;
 }

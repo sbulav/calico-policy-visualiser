@@ -5,7 +5,7 @@ import { createTheme } from '@uiw/codemirror-themes';
 import { tags as t } from '@lezer/highlight';
 import { StateEffect, StateField, type Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView } from '@codemirror/view';
-import { usePolicyContext } from '../../context/usePolicyContext';
+import { usePolicyState } from '../../context/usePolicyContext';
 
 const darkTheme = createTheme({
   theme: 'dark',
@@ -78,7 +78,7 @@ type YamlViewerProps = {
 };
 
 export default function YamlViewer({ onYamlChange }: YamlViewerProps) {
-  const { state } = usePolicyContext();
+  const state = usePolicyState();
   const editorViewRef = useRef<EditorView | null>(null);
 
   // Capture the EditorView when CodeMirror creates it

@@ -49,7 +49,9 @@ export function policyReducer(state: PolicyState, action: PolicyAction): PolicyS
   }
 }
 
-export const PolicyContext = createContext<{
-  state: PolicyState;
-  dispatch: React.Dispatch<PolicyAction>;
-} | null>(null);
+// State and dispatch live in separate contexts so that dispatch-only
+// consumers (e.g. memoized React Flow nodes) do not re-render on every
+// state change — the dispatch identity from useReducer is stable.
+export const PolicyStateContext = createContext<PolicyState | null>(null);
+
+export const PolicyDispatchContext = createContext<React.Dispatch<PolicyAction> | null>(null);

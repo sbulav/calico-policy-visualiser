@@ -2,7 +2,7 @@ import { memo, useCallback } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { RuleDetail, RuleNodeData, SourceRange } from '../../../types/graph';
 import type { RuleAction } from '../../../types/calico';
-import { usePolicyContext } from '../../../context/usePolicyContext';
+import { usePolicyDispatch } from '../../../context/usePolicyContext';
 import { isValidPort, isValidCidr } from '../../../lib/ipUtils';
 
 type RuleNodeComponentProps = NodeProps & { data: RuleNodeData };
@@ -415,7 +415,7 @@ function getUnmanagedPlaceholder(category: string): string {
 }
 
 function RuleNodeComponent({ data }: RuleNodeComponentProps) {
-  const { dispatch } = usePolicyContext();
+  const dispatch = usePolicyDispatch();
   const colors = getCategoryColors(data.category);
   const icon = getCategoryIcon(data.category);
   const isIngress = data.direction === 'ingress';

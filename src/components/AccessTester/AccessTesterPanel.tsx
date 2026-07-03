@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { usePolicyContext } from '../../context/usePolicyContext';
+import { usePolicyState, usePolicyDispatch } from '../../context/usePolicyContext';
 import { testAccess } from '../../lib/matcher/accessTester';
 import type { TrafficSpec, AccessTestResult, EndpointType, RuleTraceEntry } from '../../types/matcher';
 import type { SourceRange } from '../../types/graph';
@@ -162,7 +162,8 @@ function TraceRow({
 // ---- Main panel ----
 
 export default function AccessTesterPanel({ onClose }: AccessTesterPanelProps) {
-  const { state, dispatch } = usePolicyContext();
+  const state = usePolicyState();
+  const dispatch = usePolicyDispatch();
 
   // Form state
   const [direction, setDirection] = useState<'ingress' | 'egress'>('ingress');

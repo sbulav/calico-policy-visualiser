@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.2] - 2026-07-03
+
+### Security
+
+- **Removed private ArgoCD override index and generator script** (dead code containing internal infrastructure data); git history was rewritten to purge it.
+- **Input size limits and fetch timeout for policy loading.** Deep-link `?policy=` payloads (before and after decompression), `?url=` fetched bodies, and imported files are now capped at 1M characters; remote fetches abort after 15s. Guards against DoS via oversized YAML parsed on the main thread.
+- **Dependency updates via `npm audit fix`** — patches js-yaml quadratic-complexity DoS (GHSA-h67p-54hq-rp68) and dev-dependency advisories.
+
+### Fixed
+
+- `coversAllPrivateRanges` now recognizes `0.0.0.0/0` as covering all private ranges (JS `<<` modulo-32 wrap bug).
+- `PolicyEdge` no longer overrides per-edge `strokeWidth`, so dimmed empty-category edges render thin as intended.
+- `PolicyFlow` clears its pending `fitView` timeout on unmount.
+- File import surfaces read errors instead of failing silently.
+
+### Changed
+
+- **Performance:** policy context split into separate state/dispatch contexts — memoized React Flow rule nodes no longer re-render on every keystroke or hover; `explainPolicy()` is memoized.
+- **Refactor:** shared `lib/ruleDescription.ts` module deduplicates rule-description plumbing between the graph transform and the explainer; `groupRulesByCategory` and a single edge builder replace copy-pasted loops in `policyToGraph.ts`; new `useResizeHandle` hook replaces three duplicated panel-resize handlers.
+
+### Added
+
+- **GitHub Actions CI** — lint, tests, and build run on every push and pull request.
+
 ## [0.8.3] - 2026-02-22
 
 ### Added

@@ -55,8 +55,10 @@ function PolicyEdgeComponent({
         path={edgePath}
         markerEnd={markerEnd}
         style={{
-          ...style,
+          // Default width; may be overridden by the incoming style
+          // (e.g. thinner dimmed edges for empty categories).
           strokeWidth: 2,
+          ...style,
           stroke: strokeColor,
         }}
       />

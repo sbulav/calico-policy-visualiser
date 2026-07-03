@@ -38,6 +38,10 @@ describe('coversAllPrivateRanges — defensive guards', () => {
   it('returns true when all private ranges are covered', () => {
     expect(coversAllPrivateRanges(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10'])).toBe(true);
   });
+
+  it('recognizes 0.0.0.0/0 as covering all private ranges (/0 shift wrap regression)', () => {
+    expect(coversAllPrivateRanges(['0.0.0.0/0'])).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

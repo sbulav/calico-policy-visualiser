@@ -32,7 +32,8 @@ export function coversAllPrivateRanges(nets: string[]): boolean {
       const nPrefix = Number(nBits);
       // n covers pr if n's prefix is shorter/equal and n's network contains pr's network
       if (nPrefix > prPrefix) return false;
-      const mask = (~0 << (32 - nPrefix)) >>> 0;
+      // JS bit shifts are modulo 32, so << 32 wraps to << 0. Handle /0 explicitly.
+      const mask = nPrefix === 0 ? 0 : (~0 << (32 - nPrefix)) >>> 0;
       return (ipToNum(nIp) & mask) === (ipToNum(prIp) & mask);
     });
   });

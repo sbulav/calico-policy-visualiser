@@ -157,7 +157,7 @@ Strict TypeScript with `verbatimModuleSyntax`, `noUnusedLocals`, `noUnusedParame
 
 ## Testing
 
-328 tests across nine files.
+329 tests across nine files.
 
 | File | Tests | Covers |
 |------|-------|--------|
@@ -169,6 +169,7 @@ Strict TypeScript with `verbatimModuleSyntax`, `noUnusedLocals`, `noUnusedParame
 | `ruleMatcher.test.ts` | 37 | Rule matching against traffic specifications |
 | `accessTester.test.ts` | 18 | End-to-end access verdict evaluation |
 | `k8sSelector.test.ts` | 10 | Kubernetes label selector normalization |
+| `ipUtils.test.ts` | 23 | CIDR containment, private range coverage, port/CIDR validation |
 
 ```sh
 npm run test                                          # all tests

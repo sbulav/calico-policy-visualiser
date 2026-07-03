@@ -23,10 +23,13 @@ explanations. No backend, no API calls, no routing — everything runs in the br
   lib/parser/               YAML parsing and validation (no React)
   lib/transform/            Policy → React Flow nodes/edges (no React)
   lib/explain/              Policy → human-readable text (no React)
-  components/Layout/        App shell and panel layout
+  lib/matcher/              Selector parsing, rule matching, access testing (no React)
+  lib/urlPolicy.ts          Deep-link policy encode/decode (lz-string)
+  components/Layout/        App shell, panel layout, examples/URL modals
   components/Editor/        Editable CodeMirror YAML editor with live parsing
   components/Visualization/ React Flow canvas, custom nodes, custom edges
   components/Explanation/   Bottom explanation panel
+  components/AccessTester/  Interactive access testing side panel
   samples/                  Embedded sample YAML strings + raw files
 ```
 
@@ -51,7 +54,7 @@ Run a single test with: `npx vitest run src/path/to/file.test.ts`
 
 - **React 19** + **TypeScript ~5.9** + **Vite 7** (ESM-first, `"type": "module"`)
 - **React Flow** (`@xyflow/react`) — node/edge diagram with drag, zoom, pan
-- **CodeMirror 6** (`@uiw/react-codemirror`) — read-only YAML viewer
+- **CodeMirror 6** (`@uiw/react-codemirror`) — editable YAML editor with live parsing
 - **Tailwind CSS v4** — via `@tailwindcss/vite` plugin (no PostCSS, no tailwind.config)
 - **js-yaml** — YAML parsing
 - State: React Context + `useReducer` (no Redux/Zustand)
@@ -114,7 +117,9 @@ No path aliases — use relative paths only.
 - Do NOT memo layout or page-level components
 
 **State management:**
-- Global state via `PolicyContext` (context + useReducer with discriminated union actions)
+- Global state via split contexts (`PolicyStateContext` / `PolicyDispatchContext`, useReducer
+  with discriminated union actions). Use `usePolicyState()` / `usePolicyDispatch()`; prefer
+  dispatch-only in memoized React Flow nodes so state changes don't re-render them
 - Local UI state (panel width, collapsed) via `useState`
 - `useRef` for DOM element references
 

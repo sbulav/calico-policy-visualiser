@@ -28,6 +28,37 @@ This project is a free alternative. Load your Calico or Kubernetes NetworkPolicy
 
 ## Quick start
 
+### With Docker
+
+```sh
+docker run --rm -p 8080:8080 ghcr.io/sbulav/calico-policy-visualiser:latest
+```
+
+Open <http://localhost:8080>. The image serves the static SPA with Nginx and exposes a `/health` endpoint for container and Kubernetes probes.
+
+To build locally:
+
+```sh
+docker build -t calico-policy-visualiser .
+```
+
+The Dockerfile supports private base-image mirrors without changing the file:
+
+```sh
+docker build \
+  --build-arg NODE_IMAGE=your-registry/node:22-alpine \
+  --build-arg NGINX_IMAGE=your-registry/nginx:1.27-alpine \
+  -t calico-policy-visualiser .
+```
+
+### Kubernetes
+
+```sh
+kubectl apply -f deploy/kubernetes/calico-policy-visualiser.yaml
+```
+
+The example creates a `Deployment` and `ClusterIP` `Service` on port 80. Copy `deploy/kubernetes/ingress.example.yaml` if you want to expose it through an ingress controller.
+
 ### With Nix
 
 ```sh
@@ -102,6 +133,14 @@ const url = `https://sbulav.github.io/calico-visualiser/?policy=${param}`;
 ```
 
 ## Development
+
+### Container Publishing
+
+The GitHub Actions workflow in `.github/workflows/container.yml` validates the app with `lint`, `test`, and `build`, then publishes an OCI image to GitHub Container Registry on default-branch and `v*` tag pushes. Pull requests build the image but do not push it.
+
+Published tags include branch names, `sha-<shortsha>`, semantic versions from tags like `v0.9.2`, and `latest` from the default branch.
+
+Set repository variables `NODE_IMAGE` and `NGINX_IMAGE` if CI should build from private base-image mirrors.
 
 ### Commands
 

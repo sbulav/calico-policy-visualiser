@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: calico-policy-visualiser
+  labels:
+    app.kubernetes.io/name: calico-policy-visualiser
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: calico-policy-visualiser.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: calico-policy-visualiser
+                port:
+                  name: http
